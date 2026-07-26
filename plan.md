@@ -408,9 +408,12 @@ Example input:
 
 # 12. LLM Output Schema
 
-The LLM should return JSON only.
+The schema is enforced with a **forced tool call** on Bedrock, not by asking for
+JSON in the prompt. The tool schema is flat (`breakfast_satisfied`,
+`breakfast_confidence`, ...) because nested objects are unreliable with
+open-weight models; `llm_client.py` reassembles the nested shape below.
 
-Example:
+Example (for the calendar in section 11):
 
 ```json
 {
@@ -418,34 +421,29 @@ Example:
     "breakfast": false,
     "lunch": true,
     "dinner": false,
-    "gym": true
+    "gym": false
   },
-  "event_annotations": [
-    {
-      "title": "Lunch with Alex",
-      "category": "meal",
-      "satisfies": "lunch",
-      "confidence": 0.98
-    },
-    {
-      "title": "Basketball",
-      "category": "exercise",
-      "satisfies": "gym",
-      "confidence": 0.94
-    }
-  ],
-  "preferences": {
-    "avoid_late_dinner": true,
-    "avoid_gym_after_large_meal": true
-  }
+  "confidences": {
+    "breakfast": 0.05,
+    "lunch": 1.0,
+    "dinner": 0.05,
+    "gym": 1.0
+  },
+  "reasoning": "Lunch with Alex satisfies lunch; basketball is not weightlifting."
 }
 ```
 
-This means the deterministic scheduler only needs to schedule:
+Note `gym` is **false** even though Basketball is strenuous — see section 14.
+
+Confidence is reported for every activity, including the ones judged
+unsatisfied, so section 15's threshold can be applied uniformly.
+
+This means the deterministic scheduler needs to schedule:
 
 ```text
 Breakfast
 Dinner
+Gym
 ```
 
 ---
@@ -482,20 +480,30 @@ Example:
 ```text
 You analyze a user's daily calendar.
 
-Your job is to classify calendar events and determine whether existing
+Your job is to classify calendar events and decide whether existing
 events already satisfy breakfast, lunch, dinner, or exercise.
 
 Do not choose exact timestamps.
 Do not create calendar events.
 Do not modify events.
 
-Return only JSON matching the supplied schema.
+"gym" means weightlifting specifically -- resistance and strength
+training. Lifting, squats, bench, deadlifts, "leg day", "upper body",
+"strength session", or a plain "gym" entry all satisfy it.
 
-Be conservative. If an event is ambiguous, do not mark an activity as
-satisfied unless confidence is reasonably high.
+Cardio and sports do NOT satisfy gym, no matter how strenuous.
+Basketball, soccer, running, cycling, swimming, hiking, yoga, and
+fitness classes must all be reported as gym unsatisfied.
+
+Be conservative. If an event is ambiguous, report low confidence
+rather than marking the activity satisfied.
 ```
 
 This dramatically reduces hallucination risk.
+
+The gym definition is load-bearing and not optional. Without it the model
+treats any strenuous activity as exercise, which silently skips real
+weightlifting sessions on days with a basketball game.
 
 ---
 
@@ -1053,7 +1061,7 @@ Target:
 ```text
 Calendar:
 12:30 Lunch with Alex
-18:00 Basketball
+18:00 Weightlifting
 
 LLM:
 Lunch already satisfied.
@@ -1061,6 +1069,19 @@ Gym already satisfied.
 
 Scheduler:
 Only schedules breakfast and dinner.
+```
+
+And the negative case, which matters just as much:
+
+```text
+Calendar:
+18:00 Basketball
+
+LLM:
+Gym NOT satisfied (basketball is not weightlifting).
+
+Scheduler:
+Still schedules gym.
 ```
 
 ---
@@ -1562,7 +1583,7 @@ LLM returns:
     "breakfast": false,
     "lunch": true,
     "dinner": false,
-    "gym": true
+    "gym": false
   }
 }
 ```
@@ -1575,6 +1596,9 @@ Breakfast:
 
 Dinner:
 20:15-21:00
+
+Gym:
+16:15-17:45
 ```
 
 Calendar after execution:
@@ -1588,14 +1612,19 @@ Calendar after execution:
 
 15:00-16:00 Research Meeting
 
+16:15-17:45 [AI Scheduler] Gym
+
 18:30-20:00 Basketball
 
 20:15-21:00 [AI Scheduler] Dinner
 ```
 
-No gym is created because basketball satisfies exercise.
-
 No lunch is created because an existing lunch event already exists.
+
+Gym **is** created: basketball is exercise, but it is not weightlifting, and
+gym means weightlifting (section 14). The scheduler places it in the 16:00-18:30
+gap rather than at its 17:30 preferred start, because a 90-minute block at 17:30
+would collide with basketball.
 
 ---
 

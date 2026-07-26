@@ -1,4 +1,4 @@
-'''
-Placeholder
-
-'''
+google-api-python-client
+google-auth
+tzdata
+boto3

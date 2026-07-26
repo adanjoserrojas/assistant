@@ -1,0 +1,8 @@
+/.venv
+token.json
+service-account*.json
+.env
+/build/
+/test/__pycache__/
+/__pycache__/
+/.pytest_cache/
