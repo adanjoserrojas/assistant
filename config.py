@@ -55,5 +55,11 @@ GYM = {
     "latest": "22:00",
 }
 
-# Workout types for the new feature of assistant
-WORKOUTS = ["Chest-Triceps", "Back-Biceps", "Sharms"]
+# Workout types for the new feature of assistant, 
+# the week turns into an 8 day week because I repeat this workout twice
+WORKOUTS = [
+    "Chest-Triceps", 
+    "Back-Biceps", 
+    "Sharms", 
+    "Rest-days"
+]
