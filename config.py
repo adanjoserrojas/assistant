@@ -5,6 +5,10 @@ TIMEZONE = os.environ.get("TIMEZONE", "America/New_York")
 DAY_START = "07:00"
 DAY_END = "23:00"
 
+TABLE_NAME = os.environ["TABLE_NAME"]
+COMMAND_SECRET = os.environ.get("GYM_COMMAND_SECRET", "")
+USER_ID = "ADAN"
+
 # The calendar to read and write -- the address you shared with the service
 # account. Must be a real address; "primary" would resolve to the service
 # account's own (empty) calendar.
@@ -24,6 +28,11 @@ AGENT_MARKER_KEY = "aiScheduler"
 # All-day events ("PTO", birthdays) are returned with a date but no time.
 # False means they do not block meals; the day is still schedulable.
 ALL_DAY_BLOCKS = False
+
+VALID_GYM_LOCATIONS = {
+    "UCF",
+    "CRUNCH",
+}
 
 CONFIDENCE_THRESHOLD = 0.80
 
