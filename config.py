@@ -54,3 +54,6 @@ GYM = {
     "preferred": "17:30",
     "latest": "22:00",
 }
+
+# Workout types for the new feature of assistant
+WORKOUTS = ["Chest-Triceps", "Back-Biceps", "Sharms"]

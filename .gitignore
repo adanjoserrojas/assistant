@@ -7,3 +7,4 @@ service-account*.json
 /__pycache__/
 /.pytest_cache/
 article.md
+article.txt

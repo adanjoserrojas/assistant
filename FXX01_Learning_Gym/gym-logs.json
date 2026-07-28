@@ -1,0 +1,28 @@
+{
+    "Logs": [
+        {
+            "timestamp": "2026-07-28_14:25:00",
+            "Day": "Tuesday",
+            "duration": 65,
+            "location": "Crunch East-Colonial",
+            "Attended": true,
+            "Workout": "Back"
+        },
+        {
+            "timestamp": "2026-07-29_16:45:00",
+            "Day": "Wednesday",
+            "duration": 45,
+            "location": "Crunch East-Colonial",
+            "Attended": true,
+            "Workout": "Sharms"
+        },
+        {
+            "timestamp": "2026-07-20_10:30:00",
+            "Day": "Thursday",
+            "duration": 96,
+            "location": "Recreation Welness Center",
+            "Attended": true
+        }
+        
+    ]
+}
