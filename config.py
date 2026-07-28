@@ -61,5 +61,12 @@ WORKOUTS = [
     "Chest-Triceps", 
     "Back-Biceps", 
     "Sharms", 
+    "Rest-days",
+    "Chest-Triceps", 
+    "Back-Biceps", 
+    "Sharms", 
     "Rest-days"
 ]
+
+MIN_PLAUSIBLE_SESSION_MINUTES = 10
+MAX_PLAUSIBLE_SESSION_MINUTES = 240
