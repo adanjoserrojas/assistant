@@ -1,10 +1,33 @@
-/.venv
+# --- Credentials: never commit ---
+.env
+.env.*
+!.env.example
 token.json
 service-account*.json
-.env
+credentials.json
+client_secret*.json
+*secrets*.json
+*secrets*.yaml
+*secrets*.yml
+*.pem
+*.key
+*.p12
+*.pfx
+.aws/
+aws-credentials*
+
+# --- Environments and build output ---
+/.venv
+.venv/
+venv/
 /build/
-/test/__pycache__/
-/__pycache__/
-/.pytest_cache/
+*.zip
+
+# --- Python caches (any depth) ---
+__pycache__/
+*.py[cod]
+.pytest_cache/
+
+# --- Local drafts ---
 article.md
 article.txt
