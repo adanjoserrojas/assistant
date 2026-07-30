@@ -1,0 +1,6 @@
+{
+  "app": "python app.py",
+  "context": {
+    "gym_table_name": "AssistantData"
+  }
+}

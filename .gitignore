@@ -2,6 +2,7 @@
 .env
 .env.*
 !.env.example
+.envrc
 token.json
 service-account*.json
 credentials.json
@@ -11,8 +12,13 @@ client_secret*.json
 *secrets*.yml
 *.pem
 *.key
+*.crt
+*.cer
+*.der
 *.p12
 *.pfx
+*.jks
+*.keystore
 .aws/
 aws-credentials*
 
@@ -21,13 +27,45 @@ aws-credentials*
 .venv/
 venv/
 /build/
+dist/
+*.egg-info/
+node_modules/
 *.zip
 
 # --- Python caches (any depth) ---
 __pycache__/
 *.py[cod]
 .pytest_cache/
+.mypy_cache/
+.ruff_cache/
+
+# --- ML artifacts and training data ---
+# Model binaries are build output; the gym data is personal.
+*.pkl
+*.joblib
+*.h5
+*.onnx
+*.pt
+*.csv
+*.parquet
+.ipynb_checkpoints/
+
+# --- Editor and OS noise ---
+# .vscode/launch.json in particular tends to hold env vars.
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
+*.log
 
 # --- Local drafts ---
 article.md
 article.txt
+
+# --- infra CDK files ---
+cdk.out/
+.cdk.staging/
+# Written by synth when a stack uses context lookups (Vpc.fromLookup and
+# friends). Caches the AWS account ID, VPC and subnet IDs -- account
+# topology that should not be public.
+cdk.context.json
