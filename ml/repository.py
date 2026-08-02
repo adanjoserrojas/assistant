@@ -9,4 +9,61 @@ Ok I am back, so highkey this is gonna read the the DynamoDB table at 21 rows...
 Deployed in lambda, how do I know when there is 21 records...
 Cron job every morning and highkey query to check table records?
 
+
+
 """
+
+from config import (
+    COMMAND_SECRET,
+    MAX_PLAUSIBLE_SESSION_MINUTES,
+    MIN_PLAUSIBLE_SESSION_MINUTES,
+    TABLE_NAME,
+    TIMEZONE,
+    USER_ID,
+    VALID_GYM_LOCATIONS,
+    WORKOUTS,
+    REASONS_TO_SKIP,
+)
+
+from typing import Any
+import boto3
+from boto3.dynamodb.types import TypeDeserializer
+
+
+USER_PK = f"USER#{USER_ID}"
+SESSION_SK_PREFIX = "GYM_SESSION#"
+
+client = boto3.client("dynamodb")
+_deserializer = TypeDeserializer()
+
+
+def _deserialize_item(item: dict[str, Any]) -> dict[str, Any]:
+    return {key: _deserializer.deserialize(value) for key, value in item.items()}
+
+def fetch_sessions() -> list[dict[str, Any]]:
+    items: list[dict[str, Any]] = []
+    request: dict[str, Any] = {
+        "TableName": TABLE_NAME,
+        "KeyConditionExpression": "PK = :pk AND begins_with(SK, :prefix)",
+        "FilterExpression": "training_eligible = :eligible",
+        "ExpressionAttributeValues": {
+            ":pk": {"S": USER_PK},
+            ":prefix": {"S": SESSION_SK_PREFIX},
+            ":eligible": {"BOOL": True},
+        },
+    }
+
+    while True:
+        page = client.query(**request)
+        items.extend(_deserialize_item(item) for item in page.get("Items", []))
+
+        last_key = page.get("LastEvaluatedKey")
+        if not last_key:
+            return items
+        request["ExclusiveStartKey"] = last_key
+
+
+def count_training_sessions() -> int:
+    return len(count_training_sessions())
+
+assert count_training_sessions() != 0, f"\n\n > There is no data in the DynamoDB table, user needs to log"

@@ -69,3 +69,4 @@ cdk.out/
 # friends). Caches the AWS account ID, VPC and subnet IDs -- account
 # topology that should not be public.
 cdk.context.json
+policies/
