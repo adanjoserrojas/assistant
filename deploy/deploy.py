@@ -46,7 +46,7 @@ SOURCE_MODULES = [
 
 KEEP_DISCOVERY_DOC = "calendar.v3.json"
 
-ROOT = Path(__file__).parent
+ROOT = Path(__file__).parent.parent
 BUILD = ROOT / "build"
 PACKAGE = BUILD / "package"
 ZIP_PATH = BUILD / "calendar-agent.zip"
