@@ -18,6 +18,7 @@ from config import (
     USER_ID,
     VALID_GYM_LOCATIONS,
     WORKOUTS,
+    REASONS_TO_SKIP,
 )
 
 USER_PK = f"USER#{USER_ID}"
@@ -179,6 +180,7 @@ def start_session(body: dict[str, Any]) -> dict[str, Any]:
         "created_at": utc_iso,
         "updated_at": utc_iso,
         "schema_version": 1,
+        "injured": False,
     }
 
     DDB.transact_write_items(
@@ -392,19 +394,30 @@ def complete_rest(body: dict[str, Any]) -> dict[str, Any]:
         )
 
     cycle_index = int(state.get("next_workout_index", 0)) % len(WORKOUTS)
-    if (
-        WORKOUTS[cycle_index] != REST_WORKOUT
-        or str(body.get("reason", "")).lower() != "rest"
-    ):
+    injured: bool = False
+    reason: str = str(body.get("reason", "")).lower()
+
+    if reason not in REASONS_TO_SKIP:
         return response(
             409,
             {
                 "accepted": False,
-                "message": "SKIP advances only when the current rotation entry is Rest-days.",
+                "message": f"SKIP requires a reason, one of: {', '.join(sorted(REASONS_TO_SKIP))}.",
                 "current_workout": WORKOUTS[cycle_index],
             },
         )
 
+    if reason == "rest" and WORKOUTS[cycle_index] != REST_WORKOUT:
+        return response(
+            409,
+            {
+                "accepted": False,
+                "message": "SKIP with reason rest advances only on a Rest-days entry. Use reason injured to skip a training day YOU MUST BE INJURED.",
+                "current_workout": WORKOUTS[cycle_index],
+            },
+        )
+
+    if reason == "injured": injured = True
     _, utc_iso, local_iso = current_timestamps()
     next_index = (cycle_index + 1) % len(WORKOUTS)
     session_id = str(uuid.uuid4())
@@ -415,15 +428,17 @@ def complete_rest(body: dict[str, Any]) -> dict[str, Any]:
         "SK": session_sk,
         "entity_type": "gym_session",
         "session_id": session_id,
-        "status": "rest_completed",
+        "status": "rest_completed" if reason == "rest" else "skipped_due_to_injury",
         "training_eligible": False,
-        "workout": REST_WORKOUT,
+        "workout": WORKOUTS[cycle_index],
         "cycle_index": cycle_index,
         "timezone": TIMEZONE,
         "source": "phone_command",
         "created_at": utc_iso,
         "updated_at": utc_iso,
         "schema_version": 1,
+        "injured": injured,
+        "skip_reason": reason,
     }
 
     DDB.transact_write_items(
@@ -465,7 +480,7 @@ def complete_rest(body: dict[str, Any]) -> dict[str, Any]:
         {
             "accepted": True,
             "command": "SKIP",
-            "message": "Rest day completed; rotation advanced.",
+            "message": f"Rotation advanced due to {reason}",
             "next_workout": WORKOUTS[next_index],
             "server_timestamp": local_iso,
         },

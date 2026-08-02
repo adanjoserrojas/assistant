@@ -691,7 +691,7 @@ Recommended reason behavior:
 ```text
 rest              -> advance only when current sequence entry is Rest
 sick              -> do not advance
-injury            -> do not advance
+injury            -> new update allows you to advance and discards from training data
 travel            -> do not advance
 intentional_skip  -> do not advance
 schedule_conflict -> do not advance

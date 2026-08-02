@@ -122,10 +122,23 @@ Pick the named timezone, not a fixed UTC offset, or the schedule drifts an hour 
 |---|---|
 | `START` | Opens a session. Rejects it unless `workout` matches the current rotation entry and `location` is in `VALID_GYM_LOCATIONS`. |
 | `STOP` | Closes it, computes the real duration, advances the rotation. |
-| `SKIP` | Completes a `Rest-days` entry and advances the rotation. |
+| `SKIP` | Advances the rotation without a session. Requires a `reason` from `REASONS_TO_SKIP`. |
 | `STATUS` | Current and next workout, active session, last completed. |
 
 The rotation is `WORKOUTS` in `config.py` — an eight-entry cycle, so the same workout lands on different weekdays each pass.
+
+`SKIP` takes two reasons, and they are not interchangeable:
+
+| `reason` | When it is accepted | Record written |
+|---|---|---|
+| `rest` | Only when the current rotation entry is `Rest-days`. | `status: rest_completed` |
+| `injured` | Any entry, including a training day. | `status: skipped_due_to_injury` |
+
+`rest` stays strict on purpose — it is the normal path through a `Rest-days` entry, and letting it fire on a training day would quietly turn every missed workout into a logged rest day. `injured` is the deliberate escape hatch. Injuries land on days the rotation says you should train, and without it the only options are lying with `rest` or leaving the rotation stuck until you heal.
+
+Both reasons advance the rotation. That is a knowing deviation from `planning.md` §11.3, which says injury should hold the index. Holding it means a week off leaves you staring at the same workout with no way past it; advancing means you drift through the cycle instead, which costs nothing here because `WORKOUTS` is an eight-entry rotation rather than a weekday schedule. The missed workout is not made up.
+
+Every `SKIP` record carries `skip_reason` and `training_eligible: false`, so an injured day never reaches the model as a missed-attendance signal. `injured` is written on every session record, `START` included, so it is safe to filter on directly rather than treating a missing attribute as `false`.
 
 Both writes are `transact_write_items` against a single session item and a `GYM_STATE` item, guarded by condition expressions. Two `START`s cannot open two sessions; a stale `STOP` cannot close a session someone else already closed. `TransactionCanceledException` comes back as a 409 telling the caller to re-run `STATUS`.
 
