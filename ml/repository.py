@@ -10,18 +10,7 @@ Deployed in lambda, how do I know when there is 21 records...
 Cron job every morning and highkey query to check table records?
 """
 
-from config import (
-    COMMAND_SECRET,
-    MAX_PLAUSIBLE_SESSION_MINUTES,
-    MIN_PLAUSIBLE_SESSION_MINUTES,
-    TABLE_NAME,
-    TIMEZONE,
-    USER_ID,
-    VALID_GYM_LOCATIONS,
-    WORKOUTS,
-    REASONS_TO_SKIP,
-)
-
+from config import TABLE_NAME, USER_ID
 from typing import Any
 import boto3
 from boto3.dynamodb.types import TypeDeserializer
@@ -62,5 +51,3 @@ def fetch_sessions() -> list[dict[str, Any]]:
 
 def count_training_sessions() -> int:
     return len(fetch_sessions())
-
-assert count_training_sessions() != 0, f"\n\n > There is no data in the DynamoDB table, user needs to log"
