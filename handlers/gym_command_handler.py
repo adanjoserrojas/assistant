@@ -181,6 +181,7 @@ def start_session(body: dict[str, Any]) -> dict[str, Any]:
         "updated_at": utc_iso,
         "schema_version": 1,
         "injured": False,
+        "attended": True
     }
 
     DDB.transact_write_items(

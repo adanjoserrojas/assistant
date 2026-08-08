@@ -20,6 +20,9 @@ def parse_time(time_date: str):
     string_day = datetime(int(day[0]), int(day[1]), int(day[2]))
     return [time[0], string_day.strftime('%A')]
 
+def group_workouts() -> dict[dict]:
+    pass
+
 def build_training_data(old_data: list[dict]) -> list[dict]:
 
     new_data = []
@@ -33,6 +36,7 @@ def build_training_data(old_data: list[dict]) -> list[dict]:
             "location": item["location_code"],
             "started_at": started_at,
             "weekday": weekday,
+            "attended": False,
         })
 
     return new_data
