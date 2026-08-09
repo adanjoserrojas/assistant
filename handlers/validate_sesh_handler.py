@@ -40,3 +40,55 @@ At 11:45 pm UTC -4:00 (America/New_York) run cron job to run this handler
 12.      write_record() -> dict:
 13. 
 '''
+
+# Key layout written by gym_command_handler:
+#   PK = USER#<USER_ID>
+#   SK = GYM_STATE                                  (rotation state, one item)
+#   SK = GYM_SESSION#<checkin_at_utc>#<session_id>  (one item per session)
+#
+# The UTC check-in timestamp leads the session SK and is fixed width (seconds
+# precision, "Z" suffix), so lexicographic SK order is chronological order.
+# That is what makes "newest session" the last key in the range.
+USER_PK = f"USER#{USER_ID}"
+STATE_SK = "GYM_STATE"
+SESSION_SK_PREFIX = "GYM_SESSION#"
+
+DDB = boto3.client("dynamodb")
+SERIALIZER = TypeSerializer()
+DESERIALIZER = TypeDeserializer()
+
+
+def read_latest_session() -> dict[str, Any] | None:
+    """Read the most recent gym session record from AssistantData.
+
+    Returns the deserialized item, or None when the user has no session yet.
+
+    Query, never Scan: reading the SK range backwards with Limit=1 charges for
+    one item no matter how large the table grows. begins_with keeps the range on
+    session items -- descending order would otherwise land on GYM_STATE first,
+    since "GYM_STATE" sorts above "GYM_SESSION#". Key values travel as
+    ExpressionAttributeValues, never as concatenated expression text. Strongly
+    consistent, because this handler runs right after the day's writes and must
+    not judge the day from a stale replica.
+    """
+    page = DDB.query(
+        TableName=TABLE_NAME,
+        KeyConditionExpression="PK = :pk AND begins_with(SK, :prefix)",
+        ExpressionAttributeValues={
+            ":pk": {"S": USER_PK},
+            ":prefix": {"S": SESSION_SK_PREFIX},
+        },
+        ScanIndexForward=False,
+        Limit=1,
+        ConsistentRead=True,
+    )
+
+    items = page.get("Items", [])
+    if not items:
+        return None
+    return {key: DESERIALIZER.deserialize(value) for key, value in items[0].items()}
+
+def certify_sesh() -> bool:
+    return False
+def lambda_handler() -> dict[str, Any]:
+    return
