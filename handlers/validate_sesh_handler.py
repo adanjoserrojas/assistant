@@ -24,7 +24,7 @@ from config import (
 '''
 At 11:45 pm UTC -4:00 (America/New_York) run cron job to run this handler
 
- Pseudo type shit
+ Pseudo type shit, will be working on this soon after playing some valorant ngl
 
 1. Reads AssistantData table for a record that was posted that day
 2.  def read_table() -> bool:
