@@ -49,6 +49,7 @@ At 11:45 pm UTC -4:00 (America/New_York) run cron job to run this handler
 # The UTC check-in timestamp leads the session SK and is fixed width (seconds
 # precision, "Z" suffix), so lexicographic SK order is chronological order.
 # That is what makes "newest session" the last key in the range.
+# Will be working on ts soon --> 
 USER_PK = f"USER#{USER_ID}"
 STATE_SK = "GYM_STATE"
 SESSION_SK_PREFIX = "GYM_SESSION#"
