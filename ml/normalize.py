@@ -10,6 +10,7 @@ from datetime import datetime
 Sole purpose of this thing is to clean and prepare daata for ML logistics regression model
 And mean calculation
 '''
+DATA = logs()
 
 # protos
 def parse_time(time_date: str):
@@ -41,7 +42,4 @@ def build_training_data(old_data: list[dict]) -> list[dict]:
 
     return new_data
 
-
-if __name__ == "__main__":
-    data = logs()
-    print(json.dumps(build_training_data(data), indent=4))
+CLEAN_DATA = build_training_data(DATA)

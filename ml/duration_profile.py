@@ -5,16 +5,30 @@ Group them by workout.
 Calculate mean duration.
 Save the result to S3.
 '''
+import json
 from .normalize import (
-    build_training_data as eligible
+    CLEAN_DATA
 )
 
-def group_workout() -> list[dict]:
-    pass
+# Return the a dict of workout_type => [workouts{}], pops workout from keys to dminish redundancy
+def group_workout(data: list[dict]) -> dict[str, list[dict]]:
+
+    res: dict[str, list[dict]] = {}
+
+    for item in data:
+
+        workout_type = item.pop("workout", None)
+        res.setdefault(workout_type, []).append(item)
+
+    return res
+
+
 def calculate_mean() -> int:
     pass
 def send_S3() -> None:
     pass
 
 def main():
-    pass
+    print(json.dumps(group_workout(CLEAN_DATA), indent=4))
+
+main()
