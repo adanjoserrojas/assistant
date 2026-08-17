@@ -6,9 +6,12 @@ Calculate mean duration.
 Save the result to S3.
 '''
 import json
+import boto3
 from .normalize import (
     CLEAN_DATA
 )
+
+s3_client = boto3.client('s3')
 
 # Return the a dict of workout_type => [workouts{}], pops workout from keys to dminish redundancy
 def group_workout(data: list[dict]) -> dict[str, list[dict]]:
@@ -23,7 +26,7 @@ def group_workout(data: list[dict]) -> dict[str, list[dict]]:
 
     return res
 
-
+# Return the average time spend per workout type
 def calculate_mean() -> dict[str, float]:
 
     grouped_data = group_workout(CLEAN_DATA)
@@ -37,10 +40,3 @@ def calculate_mean() -> dict[str, float]:
 
 def send_S3() -> None:
     pass
-
-def main():
-    print(json.dumps(group_workout(CLEAN_DATA), indent=4))
-    print("----------------------------------------------")
-    print(json.dumps(calculate_mean(), indent=4))
-
-main()
