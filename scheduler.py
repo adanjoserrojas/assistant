@@ -9,6 +9,7 @@ from zoneinfo import ZoneInfo
 
 import config
 from models import Activity, CalendarEvent, ScheduledActivity
+import json
 
 # Candidate start times are generated on this grid.
 GRANULARITY_MINUTES = 15
@@ -122,7 +123,6 @@ def _candidates(activity, free_windows, day, tz):
             start += step
     return found
 
-
 def _score(activity, start, already_scheduled, day, tz):
     preferred = datetime.combine(day, activity.preferred_start, tzinfo=tz)
     score = abs((start - preferred).total_seconds()) / 60
@@ -171,5 +171,4 @@ def schedule_activities(activities, events, day, tz=None):
         busy.append(
             CalendarEvent(title=placed.name, start=placed.start, end=placed.end)
         )
-
     return scheduled, unplaced
