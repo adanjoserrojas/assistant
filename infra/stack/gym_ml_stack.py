@@ -35,7 +35,7 @@ class GymMlStack(Stack):
             removal_policy=RemovalPolicy.RETAIN,                 # cdk destroy won't eat your data
         )
 
-        agent_role = iam.Role.from_role_name(self, "CalendarAgentDev", "calendar-agent-dev")
+        agent_role = iam.Role.from_role_name(self, "calendar-agent-dev")
         self.artifacts_bucket.grant_read_write(agent_role)
 
         CfnOutput(self, "ArtifactsBucketName", value=self.artifacts_bucket.bucket_name)

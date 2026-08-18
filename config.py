@@ -6,7 +6,7 @@ DAY_START = "07:00"
 DAY_END = "23:00"
 
 TABLE_NAME = os.environ["TABLE_NAME"]
-BUCKET_NAME = os.environ["BUCKET_NAME"]
+BUCKET_NAME = os.environ.get("BUCKET_NAME", "")
 COMMAND_SECRET = os.environ.get("GYM_COMMAND_SECRET", "")
 USER_ID = "ADAN"
 

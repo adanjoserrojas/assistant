@@ -1,0 +1,6 @@
+aws sts get-caller-identity --profile [-----]
+aws login --profile [-----]
+
+cdk diff
+cdk deploy
+
