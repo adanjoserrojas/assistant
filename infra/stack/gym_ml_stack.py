@@ -35,7 +35,9 @@ class GymMlStack(Stack):
             removal_policy=RemovalPolicy.RETAIN,                 # cdk destroy won't eat your data
         )
 
-        agent_role = iam.Role.from_role_name(self, "calendar-agent-dev")
-        self.artifacts_bucket.grant_read_write(agent_role)
+        # calendar-agent-dev is an IAM user, not a role -- from_role_name would
+        # emit a policy CloudFormation cannot attach (404 NotFound at deploy).
+        agent_user = iam.User.from_user_name(self, "CalendarAgentDev", "calendar-agent-dev")
+        self.artifacts_bucket.grant_read_write(agent_user)
 
         CfnOutput(self, "ArtifactsBucketName", value=self.artifacts_bucket.bucket_name)

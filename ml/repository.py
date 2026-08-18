@@ -19,7 +19,7 @@ from boto3.dynamodb.types import TypeDeserializer
 USER_PK = f"USER#{USER_ID}"
 SESSION_SK_PREFIX = "GYM_SESSION#"
 
-client = boto3.client("dynamodb")
+client = boto3.client("dynamodb", region_name='us-east-1')
 _deserializer = TypeDeserializer()
 
 
