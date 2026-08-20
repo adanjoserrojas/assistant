@@ -10,7 +10,6 @@ from datetime import datetime
 Sole purpose of this thing is to clean and prepare daata for ML logistics regression model
 And mean calculation
 '''
-DATA = logs()
 
 # protos
 def parse_time(time_date: str):
@@ -63,4 +62,14 @@ def build_training_data(old_data: list[dict]) -> list[dict]:
 
     return new_data
 
-CLEAN_DATA = build_training_data(DATA)
+
+def clean_data() -> list[dict]:
+    """Fetch and normalize in one call.
+
+    A function, not a module-level CLEAN_DATA constant: as a constant this ran a
+    DynamoDB query on import, so merely importing anything under ml/ -- including
+    candidate_generator, which needs no session history at all -- hit the table.
+    That is a cold-start cost on every ML Lambda and makes the package impossible
+    to import in a test without credentials.
+    """
+    return build_training_data(logs())

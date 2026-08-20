@@ -6,14 +6,13 @@ Calculate mean duration.
 Save the result to S3.
 '''
 import json
-import boto3
 from .normalize import (
-    CLEAN_DATA
+    clean_data
 )
 
 from config import BUCKET_NAME
 
-s3_client = boto3.client('s3', region_name='us-east-1')
+from .candidate_generator import s3_client
 
 # Return the a dict of workout_type => [workouts{}], pops workout from keys to dminish redundancy
 def group_workout(data: list[dict]) -> dict[str, list[dict]]:
@@ -53,7 +52,7 @@ def _send_S3(payload: dict, key: str) -> str:
     if not BUCKET_NAME:
         raise RuntimeError("BUCKET_NAME is not set; run cdk deploy and export it")
 
-    s3_client.put_object(
+    s3_client().put_object(
         Bucket=BUCKET_NAME,
         Key=key,
         Body=json.dumps(payload, indent=4).encode("utf-8"),
@@ -63,7 +62,7 @@ def _send_S3(payload: dict, key: str) -> str:
 
 def main() -> None:
 
-    profiles = calculate_mean(CLEAN_DATA)
+    profiles = calculate_mean(clean_data())
 
     print(json.dumps(profiles, indent=4))
     print(_send_S3(profiles, "gym/duration_profiles.json"))

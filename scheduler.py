@@ -102,8 +102,13 @@ def calculate_free_windows(events, day, tz=None):
     return free
 
 
-def _candidates(activity, free_windows, day, tz):
-    """Every grid-aligned start where the activity fits inside a free window."""
+def candidate_starts(activity, free_windows, day, tz):
+    """Every grid-aligned start where the activity fits inside a free window.
+
+    Public because ml/candidate_generator.py builds the gym's daily options on
+    top of it -- same grid, same window arithmetic, a duration that comes from
+    the learned profile instead of config.
+    """
     duration = timedelta(minutes=activity.duration_minutes)
     earliest = datetime.combine(day, activity.earliest_start, tzinfo=tz)
     latest = datetime.combine(day, activity.latest_start, tzinfo=tz)
@@ -151,7 +156,7 @@ def schedule_activities(activities, events, day, tz=None):
 
     for activity in activities:
         free_windows = calculate_free_windows(busy, day, tz)
-        candidates = _candidates(activity, free_windows, day, tz)
+        candidates = candidate_starts(activity, free_windows, day, tz)
         if not candidates:
             unplaced.append(activity.name)
             continue
