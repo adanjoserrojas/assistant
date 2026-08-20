@@ -35,8 +35,16 @@ def calculate_mean(data: list[dict]) -> dict[str, float]:
     res: dict[str, float] = {}
 
     for workout_type, sessions in grouped_data.items():
-        total = sum(session["duration"] for session in sessions)
-        res[workout_type] = round((total / len(sessions)), 2)
+        # Unattended days are in the training set on purpose -- they are the
+        # negative examples the attendance model learns from -- but they carry a
+        # duration of 0 because no session happened. Averaging them in would
+        # shrink every profile toward zero and hand the candidate generator a
+        # calendar window too small to hold the real workout.
+        attended = [session for session in sessions if session.get("attended")]
+        if not attended:
+            continue
+        total = sum(session["duration"] for session in attended)
+        res[workout_type] = round((total / len(attended)), 2)
 
     return res
 

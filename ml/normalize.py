@@ -24,20 +24,41 @@ def parse_time(time_date: str):
 def group_workouts() -> dict[dict]:
     pass
 
+def weekday_from_date(day: str | None) -> str | None:
+    """Weekday name from a plain YYYY-MM-DD, no time component required."""
+    if not day:
+        return None
+    year, month, date_of_month = day.split("-")
+    return datetime(int(year), int(month), int(date_of_month)).strftime('%A')
+
 def build_training_data(old_data: list[dict]) -> list[dict]:
 
     new_data = []
 
     for item in old_data:
-        
-        started_at, weekday = parse_time(item["checkin_at"])
+
+        # Unattended days are written by validate_sesh_handler and carry no
+        # check-in, no duration and no location -- none of those happened. They
+        # are the negative examples, so they must survive this loop rather than
+        # KeyError it. session_date is what they carry instead.
+        checkin_at = item.get("checkin_at")
+        if checkin_at:
+            started_at, weekday = parse_time(str(checkin_at))
+        else:
+            started_at = None
+            weekday = weekday_from_date(item.get("session_date"))
+
+        duration = item.get("actual_duration_minutes")
+
         new_data.append({
-            "workout": item["workout"],
-            "duration": float(item["actual_duration_minutes"]),
-            "location": item["location_code"],
+            "workout": item.get("workout"),
+            "duration": float(duration) if duration is not None else 0.0,
+            "location": item.get("location_code"),
             "started_at": started_at,
             "weekday": weekday,
-            "attended": False,
+            # Read the record instead of hardcoding False -- otherwise every row
+            # is a negative and the regression has only one class to learn from.
+            "attended": bool(item.get("attended", False)),
         })
 
     return new_data
