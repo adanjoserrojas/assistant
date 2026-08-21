@@ -36,16 +36,12 @@ from datetime import date, datetime, timedelta
 from zoneinfo import ZoneInfo
 
 import config
-from scheduler import (
-    calculate_free_windows,
-    candidate_starts,
-    merge_busy_intervals,
-    parse_hhmm,
-)
+from scheduler import calculate_free_windows, candidate_starts
 
 from .candidate_generator import (
     MIN_SPACING_MINUTES,
     REST_WORKOUT,
+    busy_minutes,
     duration_for,
     gym_activity,
     spread_starts,
@@ -76,20 +72,6 @@ class TrainingExample:
 
     def to_row(self) -> dict:
         return asdict(self)
-
-
-def busy_minutes(events, day, tz) -> int:
-    """Minutes inside the schedulable day that something already occupies."""
-    window_start = datetime.combine(day, parse_hhmm(config.DAY_START), tzinfo=tz)
-    window_end = datetime.combine(day, parse_hhmm(config.DAY_END), tzinfo=tz)
-
-    total = 0
-    for start, end in merge_busy_intervals(events):
-        start = max(start, window_start)
-        end = min(end, window_end)
-        if end > start:
-            total += int((end - start).total_seconds() // 60)
-    return total
 
 
 def examples_for_day(

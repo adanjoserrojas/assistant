@@ -48,7 +48,7 @@ Verify the calendar connection:
 python calendar_client.py         # prints today's events
 python agent.py --dry-run         # prints the plan, writes nothing
 python agent.py                   # writes to the calendar
-python -m pytest test -q          # 31 tests, no network
+python -m pytest test -q          # 103 tests, no network
 ```
 
 ## 3. Bedrock
@@ -86,8 +86,8 @@ The trailing `-*` is required — Secrets Manager appends a random suffix to the
 **Package**
 
 ```bash
-python deploy.py            # build/calendar-agent.zip (~7.5 MB)
-python deploy.py --upload   # needs lambda:UpdateFunctionCode
+python deploy/deploy.py            # build/calendar-agent.zip (~7.5 MB)
+python deploy/deploy.py --upload   # needs lambda:UpdateFunctionCode
 ```
 
 **Function** — create, then upload the zip:
@@ -144,9 +144,53 @@ Both writes are `transact_write_items` against a single session item and a `GYM_
 
 A session outside `MIN_PLAUSIBLE_SESSION_MINUTES`..`MAX_PLAUSIBLE_SESSION_MINUTES` (10–240) closes as `needs_review` with `training_eligible: false` and returns 202. That flag is what keeps a forgotten `STOP` out of the training data.
 
+## Session validator
+
+`handlers/validate_sesh_handler.py` runs at 02:00 America/New_York on an EventBridge **Scheduler** schedule. Nothing invokes it but the clock.
+
+The command handler only writes when the phone sends something, so a day you simply did not go leaves no record at all — and the training set reads that as *no data* rather than *he skipped*. The validator closes that gap after the day is over.
+
+| Outcome | When | Written |
+|---|---|---|
+| `already_logged` | newest session's local day ≥ yesterday | nothing |
+| `unattended` | training day, nothing logged | `attended: false`, `injured: false`, `training_eligible: true`, rotation **frozen** |
+| `rest_auto_completed` | rotation entry was `Rest-days`, no `SKIP` arrived | `rest_completed` record, rotation **advanced** |
+| `no_history` | table has no sessions at all | nothing |
+
+The rotation deliberately does not advance on `unattended` — the workout you missed is still the workout that is up.
+
+Day attribution reads `checkin_at` first and `created_at` only as a fallback. An 11 PM check-in is 03:00 UTC the next morning, so going by `created_at` would file Tuesday's session under Wednesday and then mark Tuesday missed. `SKIP` records carry no `checkin_at` at all, which is why the fallback exists.
+
+Writes are idempotent by construction: `session_id` is a `uuid5` of the validated date, so the SK is deterministic and a retried invocation collides on `attribute_not_exists(SK)` and cancels harmlessly. The SK timestamp is local end-of-day in UTC, which keeps the "newest session is the last key" ordering intact.
+
+It also releases a stale `active_session_id`. A `START` with no `STOP` holds that lock forever and every later `START` answers 409; a lock older than today closes as `needs_review` with `anomaly_reason: session_never_stopped`, without inventing a duration or advancing the rotation.
+
+Replay one specific day instead of waiting for 02:00:
+
+```json
+{"target_date": "2026-08-19"}
+```
+
+It refuses any date that is not over yet.
+
+```bash
+python deploy/deploy_validator_handler.py   # ~/Downloads/gym-session-validator.zip
+```
+
+That zip bundles `tzdata`, unlike the gym command zip. This handler builds `LOCAL_TZ = ZoneInfo(TIMEZONE)` at module scope, so a missing tzdata is not one failed request — it is an init failure that kills every invocation, and a cron that silently never runs is noticed weeks later.
+
+| Setting | Value |
+|---|---|
+| Handler | `validate_sesh_handler.lambda_handler` |
+| Timeout | 30s |
+| Env | `TABLE_NAME`, `TIMEZONE` |
+| IAM | `dynamodb:GetItem`, `Query`, `PutItem`, `UpdateItem` |
+
+There is no `dynamodb:TransactWriteItems` action — transactions are authorized through the underlying `PutItem`/`UpdateItem`. `Query` is separate from `GetItem`, and it is the call that decides whether you attended.
+
 ## Gym ML pipeline
 
-> **Status: in progress.** `ml/repository.py` and `infra/stack/gym_ml_stack.py` are stubs, and no ML Lambda is deployed. Until this ships, gym keeps using the fixed values in `config.py`. The build order is in [ml/gym_ml_cdk_plan.md](ml/gym_ml_cdk_plan.md).
+> **Status: in progress.** Phases 1 and 2 are built and tested — `repository.py`, `normalize.py`, `duration_profile.py`, `candidate_generator.py`, `backfill.py`, `features.py`. Still missing: `train.py`, `predict.py`, the scoring handler, and every Lambda in `GymMlStack` (the stack creates only the artifacts bucket today). Until this ships, gym keeps using the fixed values in `config.py`. Build order is in [ml/gym_ml_cdk_plan.md](ml/gym_ml_cdk_plan.md).
 
 Today gym is scheduled with two hardcoded assumptions in `config.GYM`: every session is 90 minutes, and the best time is whichever free slot sits closest to 17:30. Neither reflects what actually happens. `Sharms` does not take as long as `Back-Biceps`, and the 5:30 PM slot you keep skipping is worse than the 8:00 PM one you keep attending.
 
@@ -158,6 +202,8 @@ This pipeline replaces both with values learned from your own logged sessions.
 |---|---|---|
 | Duration | `config.GYM["duration"]` = 90 for everything | Mean actual duration for that workout type |
 | Slot choice | `scheduler._score()`, minutes away from `preferred_start` | Logistic regression attendance probability, highest wins |
+
+Meals stay static and deterministic. Only gym becomes dynamic — and meals must be placed first, so the gym candidates see a full picture of the day. `SCHEDULING_ORDER` in `scheduler.py` already encodes that: each placed activity becomes busy for the next.
 
 The meal-gap penalty in `_score()` stays. It encodes "do not lift right after eating," which is a constraint, not a preference the model should be free to learn away.
 
@@ -175,15 +221,45 @@ Read completed sessions from DynamoDB, group by workout, take the mean duration.
 
 Written to S3 as `duration_profiles.json`. A workout with no history falls back to `config.GYM["duration"]`.
 
+Only attended sessions count toward the mean. Unattended days are in the training set on purpose, but they carry a duration of 0 — averaging them in would shrink every profile toward zero and hand the candidate generator a window too small to hold the real workout.
+
 ### 2. Candidate generation
 
-Each morning: read the current rotation entry, load its mean duration, reuse the existing free-window logic in `scheduler.py`, and return up to three slots that fit.
+Each morning: read the current rotation entry, load its mean duration, reuse `calculate_free_windows` and `candidate_starts` from `scheduler.py`, and return up to three slots that fit.
 
 Candidate generation stays deterministic. The model ranks slots; it never invents one.
 
-### 3. Attendance model
+Candidates are *spread*, not merely valid. A 15-minute grid across an open evening yields twenty near-identical slots, and scoring those produces three probabilities that differ in the third decimal place. `MIN_SPACING_MINUTES` (60) thins the grid, then the survivors are sampled evenly across the day so the model sees a morning, an afternoon, and an evening option rather than three flavours of 5:30.
 
-Eight features per candidate — start time, weekday, workout type, calendar busy minutes, gap before, gap after, location, previous attendance — into a scikit-learn logistic regression that returns a probability.
+The rotation is state-driven, not date-driven, so `resolve_workout()` takes no date argument — `next_workout_index` moves only when a session completes or the validator closes out a rest day.
+
+### 3. Training data
+
+The model is a **ranker**, not a day-level classifier. At prediction time the question is "which of these three slots is best", so `backfill.py` builds training rows that are slots, not days:
+
+| Day | Rows |
+|---|---|
+| attended | the slot you used is `chosen: true`; the other viable slots that day are `chosen: false` |
+| unattended | every viable slot is `chosen: false` |
+
+Day-level labelling gives one row per day and a handful of negatives per season — enough to support roughly one predictor. Slot-level gives one row per option, and the comparison the model must learn (5:30 beat 8:00 *on that day, given that calendar*) is exactly the one it will be asked to make.
+
+Two rules that keep the data honest:
+
+- **Duration always comes from the profile, never `actual_duration_minutes`.** The real duration is only knowable after the session. Using it for positives and the profile for negatives would let the model separate the classes on a field that does not exist at prediction time.
+- **Rest and injury days never appear.** `fetch_sessions` filters them out via `training_eligible`, and they do not belong regardless — a rest day is not a scheduling decision, and no proposed time would have prevented an injury. Rest days are also perfectly predictable from `cycle_index`, so including them would buy free accuracy and zero information.
+
+An attended day whose check-in matches no viable slot is dropped whole, positives and negatives together — you trained during something the calendar called busy, and keeping only the negatives would record a day you attended as a total refusal. `build_examples` returns diagnostics; `days_dropped_no_slot` measures how often the calendar disagrees with your life.
+
+Rows carry `day` so a train/test split can group by it. Slots from one day share a calendar and are not independent observations — split them across the boundary and the test set holds near-duplicates of training rows.
+
+### 4. Attendance model
+
+`features.py` turns a row into a vector, and it is the *only* thing that does, in both directions: `TrainingExample.to_row()` at train time, `Candidate.to_dict()` at predict time. Those two dicts expose the same feature keys deliberately.
+
+The `FeatureSpec` — ordered feature names and frozen category lists — ships inside `model_metadata.json` beside the coefficients and is passed in, never inferred at predict time. A spec derived from whatever data is at hand produces a different column order for the same row, and the coefficients then land on columns they were never fitted on. Nothing raises. The predictions just quietly stop meaning anything.
+
+The default spec is three features — `start_hour`, `gap_after_minutes`, `is_weekend` — not the eight in the original plan. With roughly 30 attended days, each a choice set of "here were the options, I took this one", three or four parameters is the budget before the fit memorizes days instead of learning times. Widen it as the season fills in and retrain; nothing else changes, because the spec travels with the model.
 
 ```text
 3:00 PM → 0.52
@@ -191,11 +267,13 @@ Eight features per candidate — start time, weekday, workout type, calendar bus
 8:00 PM → 0.61
 ```
 
-The highest-scoring candidate that still passes the validator wins.
+The highest-scoring candidate that still passes the validator wins. Ordering matters more than calibration: if all three slots score 0.3 the best one still wins, so the fallback to `scheduler._score()` triggers on *whether a usable model exists* — no artifact in S3, or too few negatives in `model_metadata.json` — not on the winning probability. `CONFIDENCE_THRESHOLD` does not gate a ranker.
 
 ### Artifacts and stack
 
 S3 holds `duration_profiles.json`, `attendance_model.joblib`, and `model_metadata.json`.
+
+**`model_metadata.json` is the model that gets deployed**, not the joblib. Logistic regression inference is a dot product and a sigmoid, so exporting coefficients plus the feature spec lets the scoring Lambda score in pure Python with no ML dependencies at all. scikit-learn pulls numpy and scipy — roughly 200 MB unzipped, against a 50 MB console upload limit and a 250 MB unzipped ceiling — and a joblib pickle is version-locked to the scikit-learn that wrote it. The joblib stays in S3 for retraining and inspection.
 
 `GymMlStack` creates the artifacts bucket, a training Lambda, a candidate-scoring Lambda, an EventBridge training schedule, and their IAM permissions. It references the existing `AssistantData` table **by name** — the table, the gym command Lambda, API Gateway, the Shortcut, the calendar Lambda, and the Bedrock logic are all left alone.
 
@@ -249,27 +327,42 @@ Gym means weightlifting. Cardio and sports don't satisfy it — edit `SYSTEM_PRO
 agent.py                        orchestration, CLI, lambda_handler
 calendar_client.py              Google Calendar read/write
 llm_client.py                   Bedrock classification, forced tool-call schema
-scheduler.py                    interval merging, free windows, candidate scoring
+scheduler.py                    interval merging, free windows, candidate starts
 validator.py                    last gate before any write
 models.py                       dataclasses
 config.py                       preferences
-deploy.py                       Lambda packaging
 
 handlers/
   gym_command_handler.py        START/STOP/SKIP/STATUS, DynamoDB writes
+  validate_sesh_handler.py      02:00 cron, records days you did not log
 
 ml/
-  repository.py                 (stub) session reads
+  repository.py                 session + rotation-state reads
+  normalize.py                  DynamoDB records -> flat training rows
+  duration_profile.py           mean duration per workout -> S3
+  candidate_generator.py        daily slots, spread and valid
+  backfill.py                   slot-level training examples from history
+  features.py                   FeatureSpec, row -> vector, both directions
   gym_ml_cdk_plan.md            pipeline build plan
+
+ml_handlers/
+  train_model_handler.py        training Lambda entrypoint
+
+deploy/
+  deploy.py                     calendar agent packaging
+  deploy_gym_handler.py         gym command Lambda zip
+  deploy_validator_handler.py   validator zip, bundles tzdata
 
 infra/
   app.py                        CDK app entrypoint
   cdk.json                      Python app metadata plus AssistantData table name
-  stack/gym_ml_stack.py         (stub) GymMlStack
+  stack/gym_ml_stack.py         GymMlStack -- artifacts bucket only so far
   requirements.txt
 
-test/                           31 tests, no network
+test/                           103 tests, no network
 ```
+
+Everything under `ml/` imports without credentials: no module builds a boto3 client or reads DynamoDB at import time, and the pure functions (`generate_candidates`, `examples_for_day`, `vectorize`) take their data as arguments. That is what keeps the test suite offline.
 
 Agent-created events carry an `extendedProperties` marker and an `[AI Scheduler]` title prefix. Re-running the same day writes nothing.
 

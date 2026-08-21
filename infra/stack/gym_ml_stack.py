@@ -8,6 +8,7 @@ from aws_cdk import (
 from constructs import Construct
 import aws_cdk.aws_s3 as s3
 import aws_cdk.aws_iam as iam
+import aws_cdk.aws_lambda as lambd
 
 
 
@@ -34,6 +35,9 @@ class GymMlStack(Stack):
             enforce_ssl=True,
             removal_policy=RemovalPolicy.RETAIN,                 # cdk destroy won't eat your data
         )
+        self.artifacts_function = lambd.function( 
+        )
+        
 
         # calendar-agent-dev is an IAM user, not a role -- from_role_name would
         # emit a policy CloudFormation cannot attach (404 NotFound at deploy).

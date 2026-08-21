@@ -23,7 +23,12 @@ import boto3
 
 import config
 from models import Activity
-from scheduler import calculate_free_windows, candidate_starts, parse_hhmm
+from scheduler import (
+    calculate_free_windows,
+    candidate_starts,
+    merge_busy_intervals,
+    parse_hhmm,
+)
 
 from .repository import fetch_state
 
@@ -62,17 +67,28 @@ class Candidate:
     duration_minutes: int
     gap_before_minutes: int
     gap_after_minutes: int
+    busy_minutes: int
 
     def to_dict(self) -> dict:
+        """The feature row for this candidate.
+
+        Every key features.py can read must also appear in
+        backfill.TrainingExample.to_row(), and mean the same thing. A candidate
+        scored at 5:30 today and a training row from a 5:30 session last month
+        have to vectorize identically, or the coefficients get applied to
+        columns they were not fitted on -- silently, with plausible output.
+        """
         return {
             "workout": self.workout,
             "start": self.start.isoformat(timespec="seconds"),
             "end": self.end.isoformat(timespec="seconds"),
             "start_time": self.start.strftime("%H:%M:%S"),
+            "start_hour": self.start.hour + self.start.minute / 60,
             "weekday": self.start.strftime("%A"),
             "duration_minutes": self.duration_minutes,
             "gap_before_minutes": self.gap_before_minutes,
             "gap_after_minutes": self.gap_after_minutes,
+            "busy_minutes": self.busy_minutes,
         }
 
 
@@ -134,6 +150,26 @@ def gym_activity(duration_minutes: int) -> Activity:
     )
 
 
+def busy_minutes(events, day, tz) -> int:
+    """Minutes inside the schedulable day that something already occupies.
+
+    A property of the day, identical across its candidates -- "how full was this
+    day", which is the plan's Calendar busy minutes feature. Lives here rather
+    than in backfill.py so training rows and live candidates compute it with the
+    same code.
+    """
+    window_start = datetime.combine(day, parse_hhmm(config.DAY_START), tzinfo=tz)
+    window_end = datetime.combine(day, parse_hhmm(config.DAY_END), tzinfo=tz)
+
+    total = 0
+    for start, end in merge_busy_intervals(events):
+        start = max(start, window_start)
+        end = min(end, window_end)
+        if end > start:
+            total += int((end - start).total_seconds() // 60)
+    return total
+
+
 def window_for(start: datetime, free_windows: list[tuple[datetime, datetime]]):
     for window_start, window_end in free_windows:
         if window_start <= start and start < window_end:
@@ -189,6 +225,7 @@ def generate_candidates(
 
     free_windows = calculate_free_windows(events, day, tz)
     starts = candidate_starts(gym_activity(duration_minutes), free_windows, day, tz)
+    occupied = busy_minutes(events, day, tz)
 
     candidates = []
     for start in spread_starts(sorted(starts), limit, timedelta(minutes=MIN_SPACING_MINUTES)):
@@ -205,6 +242,7 @@ def generate_candidates(
                 duration_minutes=duration_minutes,
                 gap_before_minutes=int((start - window_start).total_seconds() // 60),
                 gap_after_minutes=int((window_end - end).total_seconds() // 60),
+                busy_minutes=occupied,
             )
         )
     return candidates

@@ -12,6 +12,8 @@ from .candidate_generator import (
     resolve_workout,
 )
 from .backfill import TrainingExample, build_examples, examples_for_day
+from .features import DEFAULT as DEFAULT_FEATURES
+from .features import FeatureSpec, design_matrix, vectorize
 
 __all__ = [
     "fetch_sessions",
@@ -27,5 +29,9 @@ __all__ = [
     "TrainingExample",
     "build_examples",
     "examples_for_day",
+    "DEFAULT_FEATURES",
+    "FeatureSpec",
+    "design_matrix",
+    "vectorize",
 ]
 
