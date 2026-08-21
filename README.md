@@ -48,7 +48,7 @@ Verify the calendar connection:
 python calendar_client.py         # prints today's events
 python agent.py --dry-run         # prints the plan, writes nothing
 python agent.py                   # writes to the calendar
-python -m pytest test -q          # 103 tests, no network
+python -m pytest test -q          # 148 tests, no network
 ```
 
 ## 3. Bedrock
@@ -190,7 +190,7 @@ There is no `dynamodb:TransactWriteItems` action — transactions are authorized
 
 ## Gym ML pipeline
 
-> **Status: in progress.** Phases 1 and 2 are built and tested — `repository.py`, `normalize.py`, `duration_profile.py`, `candidate_generator.py`, `backfill.py`, `features.py`. Still missing: `train.py`, `predict.py`, the scoring handler, and every Lambda in `GymMlStack` (the stack creates only the artifacts bucket today). Until this ships, gym keeps using the fixed values in `config.py`. Build order is in [ml/gym_ml_cdk_plan.md](ml/gym_ml_cdk_plan.md).
+> **Status: in progress.** Phases 1 and 2 are built and tested — `repository.py`, `normalize.py`, `duration_profile.py`, `candidate_generator.py`, `backfill.py`, `features.py`, `train.py`, `predict.py`. Still missing: the scoring handler and every Lambda in `GymMlStack` (the stack creates only the artifacts bucket today). Until this ships, gym keeps using the fixed values in `config.py`. Build order is in [ml/gym_ml_cdk_plan.md](ml/gym_ml_cdk_plan.md).
 
 Today gym is scheduled with two hardcoded assumptions in `config.GYM`: every session is 90 minutes, and the best time is whichever free slot sits closest to 17:30. Neither reflects what actually happens. `Sharms` does not take as long as `Back-Biceps`, and the 5:30 PM slot you keep skipping is worse than the 8:00 PM one you keep attending.
 
@@ -259,7 +259,9 @@ Rows carry `day` so a train/test split can group by it. Slots from one day share
 
 The `FeatureSpec` — ordered feature names and frozen category lists — ships inside `model_metadata.json` beside the coefficients and is passed in, never inferred at predict time. A spec derived from whatever data is at hand produces a different column order for the same row, and the coefficients then land on columns they were never fitted on. Nothing raises. The predictions just quietly stop meaning anything.
 
-The default spec is three features — `start_hour`, `gap_after_minutes`, `is_weekend` — not the eight in the original plan. With roughly 30 attended days, each a choice set of "here were the options, I took this one", three or four parameters is the budget before the fit memorizes days instead of learning times. Widen it as the season fills in and retrain; nothing else changes, because the spec travels with the model.
+The default spec is four features — `start_hour`, `start_hour_sq`, `gap_after_minutes`, `is_weekend` — not the eight in the original plan. With roughly 30 attended days, each a choice set of "here were the options, I took this one", three or four parameters is the budget before the fit memorizes days instead of learning times. Widen it as the season fills in and retrain; nothing else changes, because the spec travels with the model.
+
+`start_hour_sq` is what lets the model have a *preferred time of day* at all. A single linear coefficient on `start_hour` can only say "later is better" or "earlier is better" — never "around six is better" — and a linear-only fit loses to the incumbent heuristic for exactly that reason. It is centered on the midpoint of the schedulable day before squaring, and the centering is not cosmetic: raw `start_hour` and raw `start_hour²` correlate at about 0.99 across a 07:00–23:00 day, so after standardization they are nearly the same column, L2 splits the weight between them, and the curvature cancels to nothing. Uncentered, the fitted quadratic coefficient comes out at 0.005 against a linear 0.71 — a straight line wearing a parabola's name.
 
 ```text
 3:00 PM → 0.52
@@ -267,11 +269,23 @@ The default spec is three features — `start_hour`, `gap_after_minutes`, `is_we
 8:00 PM → 0.61
 ```
 
-The highest-scoring candidate that still passes the validator wins. Ordering matters more than calibration: if all three slots score 0.3 the best one still wins, so the fallback to `scheduler._score()` triggers on *whether a usable model exists* — no artifact in S3, or too few negatives in `model_metadata.json` — not on the winning probability. `CONFIDENCE_THRESHOLD` does not gate a ranker.
+The highest-scoring candidate that still passes the validator wins. Ordering matters more than calibration: if all three slots score 0.3 the best one still wins, so the fallback to `scheduler._score()` triggers on *whether a usable model exists* — not on the winning probability. `CONFIDENCE_THRESHOLD` does not gate a ranker.
+
+`predict.usable()` refuses the model unless it has at least 20 training days, at least a few negatives, and **beats the incumbent heuristic on held-out days**. That last gate is the important one: the thing to beat is "pick the free slot nearest 17:30", and a model that cannot is not worth deploying over the code you already have.
+
+The metric is top-1 within an hour — of the day's candidates, does the highest-scoring one land within 60 minutes of when you actually trained. That is the question the deployed system is asked: it proposes one slot, and you either train near it or you do not. Plain row accuracy is meaningless here (most slots are negatives, so "not chosen" for everything scores ~90% while picking nothing), and exact-slot matching is too harsh, because training rows keep your real off-grid check-in and a day can hold both 17:00 and 17:15 — a distinction serving never has to make.
+
+### Training artifacts
+
+Retraining is a **full refit from DynamoDB**, never an update of the previous model. The old artifact is not an input, which is why nothing has to survive between runs except the session history the command handler and validator are already accumulating.
+
+Training is pure Python — no scikit-learn, no numpy. L2-regularized logistic regression by gradient descent over a few hundred rows and four features fits in under a second, and `test_predict.py::test_matches_sklearn` checks the coefficients against `LogisticRegression` so the shortcut is verified rather than assumed.
+
+Two things beyond coefficients travel in the artifact, both of which silently corrupt predictions if lost: the `FeatureSpec` (column order) and the standardization means and standard deviations (`start_hour` runs 7–22, `gap_after_minutes` runs 0–900, and gradient descent on raw values crawls).
 
 ### Artifacts and stack
 
-S3 holds `duration_profiles.json`, `attendance_model.joblib`, and `model_metadata.json`.
+S3 holds `duration_profiles.json` and `model_metadata.json`. There is no `.joblib` — see below.
 
 **`model_metadata.json` is the model that gets deployed**, not the joblib. Logistic regression inference is a dot product and a sigmoid, so exporting coefficients plus the feature spec lets the scoring Lambda score in pure Python with no ML dependencies at all. scikit-learn pulls numpy and scipy — roughly 200 MB unzipped, against a 50 MB console upload limit and a 250 MB unzipped ceiling — and a joblib pickle is version-locked to the scikit-learn that wrote it. The joblib stays in S3 for retraining and inspection.
 
@@ -343,6 +357,8 @@ ml/
   candidate_generator.py        daily slots, spread and valid
   backfill.py                   slot-level training examples from history
   features.py                   FeatureSpec, row -> vector, both directions
+  train.py                      pure-Python logistic fit -> model_metadata.json
+  predict.py                    score candidates, gate on beating the baseline
   gym_ml_cdk_plan.md            pipeline build plan
 
 ml_handlers/
@@ -359,7 +375,7 @@ infra/
   stack/gym_ml_stack.py         GymMlStack -- artifacts bucket only so far
   requirements.txt
 
-test/                           103 tests, no network
+test/                           148 tests, no network
 ```
 
 Everything under `ml/` imports without credentials: no module builds a boto3 client or reads DynamoDB at import time, and the pure functions (`generate_candidates`, `examples_for_day`, `vectorize`) take their data as arguments. That is what keeps the test suite offline.

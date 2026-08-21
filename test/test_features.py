@@ -55,8 +55,15 @@ def at(hhmm, day=DAY):
 # --- FeatureSpec ---------------------------------------------------------
 
 
-def test_default_spec_is_three_features():
-    assert len(DEFAULT.feature_names) == 3
+def test_default_spec_is_four_features():
+    assert len(DEFAULT.feature_names) == 4
+
+
+def test_default_spec_can_express_a_peak_time_of_day():
+    # Linear start_hour alone can only say "later is better"; the squared term
+    # is what lets the fit put an optimum in the middle of the day.
+    assert "start_hour" in DEFAULT.feature_names
+    assert "start_hour_sq" in DEFAULT.feature_names
 
 
 def test_feature_names_are_ordered_numeric_derived_categorical():
@@ -202,7 +209,7 @@ def test_default_spec_works_on_both_row_shapes():
     events = []
     training = examples_for_day(WORKOUT, 82, events, DAY, at("17:30"), TZ)[0].to_row()
     live = generate_candidates(WORKOUT, 82, events, DAY, TZ, limit=1)[0].to_dict()
-    assert len(vectorize(training, DEFAULT)) == len(vectorize(live, DEFAULT)) == 3
+    assert len(vectorize(training, DEFAULT)) == len(vectorize(live, DEFAULT)) == 4
 
 
 # --- labels / groups / design_matrix -------------------------------------

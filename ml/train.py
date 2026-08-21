@@ -37,10 +37,22 @@ ARTIFACT_VERSION = 1
 LEARNING_RATE = 0.5
 MAX_ITERATIONS = 3000
 TOLERANCE = 1e-7
-L2 = 1.0
+
+# Penalty on the mean-loss objective used here. scikit-learn's default C=1.0
+# corresponds to l2 = 1/(C*n), which is about 0.002 at a few hundred rows -- so
+# an l2 of 1.0 is not "mild regularization", it is roughly 400x sklearn's
+# default and flattens every coefficient to near zero. This is deliberately a
+# few times stronger than sklearn's default, because the sample is small, and
+# nowhere near strong enough to erase the fit.
+L2 = 0.01
 
 # Held-out fraction, by day rather than by row.
 HOLDOUT_FRACTION = 0.25
+
+# A proposed slot counts as a hit if you trained within this many hours of
+# it. Matches MIN_SPACING_MINUTES: serving offers slots an hour apart, so
+# anything inside an hour is the slot it would have proposed anyway.
+TOLERANCE_HOURS = 1.0
 
 
 def sigmoid(z: float) -> float:
@@ -81,6 +93,30 @@ def apply_standardization(
     return [(value - mean) / std for value, mean, std in zip(row, means, stds)]
 
 
+def safe_learning_rate(
+    X: list[list[float]], l2: float, requested: float = LEARNING_RATE
+) -> float:
+    """Cap the step at 1/L, where L bounds the curvature of the objective.
+
+    Gradient descent diverges when the step exceeds 2/L. The L2 term alone
+    contributes l2 to the curvature, so a requested rate of 0.5 with l2=10 gives
+    an update of `w -= 5w` -- the weights oscillate, grow, and land on NaN. NaN
+    coefficients are worse than a bad fit: they produce NaN probabilities that
+    compare false against everything, so ranking silently returns whatever came
+    first.
+
+    The logistic loss contributes at most 0.25 * E[||x||^2]. Defaults are
+    unaffected (l2=1 over three standardized columns caps at about 0.57).
+    """
+    if not X:
+        return requested
+    mean_square = sum(sum(value * value for value in row) for row in X) / len(X)
+    lipschitz = 0.25 * mean_square + l2
+    if lipschitz <= 0:
+        return requested
+    return min(requested, 1.0 / lipschitz)
+
+
 def fit_logistic(
     X: list[list[float]],
     y: list[float],
@@ -103,6 +139,7 @@ def fit_logistic(
     weights = [0.0] * width
     intercept = 0.0
     rows = len(X)
+    learning_rate = safe_learning_rate(X, l2, learning_rate)
 
     converged = False
     for _ in range(iterations):
@@ -123,8 +160,19 @@ def fit_logistic(
         step = max(
             max((abs(g) for g in gradient), default=0.0), abs(intercept_gradient)
         )
-        weights = [w - learning_rate * g for w, g in zip(weights, gradient)]
-        intercept -= learning_rate * intercept_gradient
+        candidate = [w - learning_rate * g for w, g in zip(weights, gradient)]
+        candidate_intercept = intercept - learning_rate * intercept_gradient
+
+        # Belt and braces over safe_learning_rate: never let a non-finite value
+        # reach the artifact. Keeping the last good weights and reporting
+        # converged=False leaves usable() to reject the model rather than
+        # shipping NaN coefficients that score every slot identically.
+        if not all(math.isfinite(value) for value in candidate) or not math.isfinite(
+            candidate_intercept
+        ):
+            return weights, intercept, False
+
+        weights, intercept = candidate, candidate_intercept
 
         if step < tolerance:
             converged = True
@@ -181,6 +229,42 @@ def top1_accuracy(scores: list[float], y: list[float], groups: list[str]) -> flo
     return hits / len(scored)
 
 
+def top1_hit_rate(
+    rows: list[dict], scores: list[float], tolerance: float = TOLERANCE_HOURS
+) -> float | None:
+    """Fraction of days where the top-ranked slot lands within `tolerance` of
+    when you actually trained.
+
+    The gating metric, because it is the question the deployed system is asked:
+    we propose one slot, and either you train near it or you do not.
+
+    Exact-slot matching is too harsh to be informative here. Training rows are
+    enumerated on the 15-minute grid and keep your real off-grid check-in, so a
+    day can hold both 17:00 and 17:15 -- and scoring "predicted 17:00, actual
+    17:15" as a total miss measures nothing, since serving only ever offers
+    slots an hour apart and would never have to separate those two.
+    """
+    by_day: dict[str, list[tuple[float, dict]]] = {}
+    for row, score in zip(rows, scores):
+        by_day.setdefault(str(row.get("day", "")), []).append((score, row))
+
+    hits = 0
+    days = 0
+    for day_rows in by_day.values():
+        taken = [row for _, row in day_rows if row.get("chosen")]
+        if not taken:
+            continue
+        days += 1
+        top = max(day_rows, key=lambda pair: pair[0])[1]
+        gap = abs(
+            float(top.get("start_hour", 0.0)) - float(taken[0].get("start_hour", 0.0))
+        )
+        if gap <= tolerance:
+            hits += 1
+
+    return hits / days if days else None
+
+
 def baseline_scores(rows: list[dict]) -> list[float]:
     """The incumbent: closeness to config.GYM["preferred"].
 
@@ -215,13 +299,17 @@ def train(rows: list[dict], spec: FeatureSpec = DEFAULT, l2: float = L2) -> dict
             predict_one(apply_standardization(X[i], means, stds), weights, intercept)
             for i in test_index
         ]
-        evaluation["top1_accuracy"] = top1_accuracy(scores, test_y, test_groups)
-        evaluation["baseline_top1_accuracy"] = top1_accuracy(
-            baseline_scores(test_rows), test_y, test_groups
+        evaluation["tolerance_hours"] = TOLERANCE_HOURS
+        evaluation["top1_accuracy"] = top1_hit_rate(test_rows, scores)
+        evaluation["baseline_top1_accuracy"] = top1_hit_rate(
+            test_rows, baseline_scores(test_rows)
         )
+        # Kept as a stricter secondary read; not what usable() gates on.
+        evaluation["top1_exact"] = top1_accuracy(scores, test_y, test_groups)
     else:
         evaluation["top1_accuracy"] = None
         evaluation["baseline_top1_accuracy"] = None
+        evaluation["top1_exact"] = None
 
     return {
         "version": ARTIFACT_VERSION,

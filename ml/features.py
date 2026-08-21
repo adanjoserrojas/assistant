@@ -26,6 +26,20 @@ import json
 from dataclasses import dataclass, field
 from typing import Any, Callable
 
+import config
+
+
+def _hours(hhmm: str) -> float:
+    hours, minutes = hhmm.split(":")
+    return int(hours) + int(minutes) / 60
+
+
+# Midpoint of the schedulable day, and the point the quadratic term is centered
+# on. A constant read from config rather than a fitted mean, because predict.py
+# has to compute the identical value from a single row with no training set in
+# sight.
+DAY_MIDPOINT = (_hours(config.DAY_START) + _hours(config.DAY_END)) / 2
+
 WEEKDAYS = (
     "Monday",
     "Tuesday",
@@ -43,11 +57,32 @@ def _is_weekend(row: dict) -> float:
     return 1.0 if row.get("weekday") in WEEKEND else 0.0
 
 
+def _start_hour_squared(row: dict) -> float:
+    """Lets the model put a peak somewhere in the day.
+
+    Without a quadratic term, start_hour is a single linear coefficient and the
+    model can only say "later is better" or "earlier is better" -- never "around
+    six is better". A preferred training time is exactly the shape it cannot
+    fit, which is why a linear-only model loses to the incumbent heuristic
+    (distance from config.GYM["preferred"]) on held-out days.
+
+    Centered on DAY_MIDPOINT, and that centering is the whole trick. Raw
+    start_hour and raw start_hour**2 correlate at about 0.99 across a 7-to-23
+    day: after standardization they are very nearly the same column, L2 splits
+    the weight between them, and the curvature cancels to nothing -- a fitted
+    quadratic coefficient of 0.005 against a linear 0.71, which is a straight
+    line wearing a parabola's name. Subtracting the midpoint first makes the two
+    terms near-orthogonal, so the quadratic is free to bend.
+    """
+    return (float(row.get("start_hour", DAY_MIDPOINT)) - DAY_MIDPOINT) ** 2
+
+
 # Features computed from a row rather than read off it. Keep them pure and
 # total: a derived feature that raises on an unexpected row turns a scoring run
 # into an outage.
 DERIVED: dict[str, Callable[[dict], float]] = {
     "is_weekend": _is_weekend,
+    "start_hour_sq": _start_hour_squared,
 }
 
 
@@ -95,14 +130,15 @@ class FeatureSpec:
         )
 
 
-# Three parameters, chosen to fit the data you actually have:
+# Four parameters, chosen to fit the data you actually have:
 #   start_hour          the thing the model exists to learn
+#   start_hour_sq       paired with it so "best around six" is expressible at all
 #   gap_after_minutes   how much slack follows the session -- a slot with 20
 #                       minutes after it is a slot you skip
 #   is_weekend          one column instead of seven for weekday
 DEFAULT = FeatureSpec(
     numeric=("start_hour", "gap_after_minutes"),
-    derived=("is_weekend",),
+    derived=("start_hour_sq", "is_weekend"),
 )
 
 
