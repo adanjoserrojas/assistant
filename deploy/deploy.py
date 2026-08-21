@@ -42,7 +42,13 @@ SOURCE_MODULES = [
     "validator.py",
     "models.py",
     "config.py",
+    "gym_allocator.py",
 ]
+
+# The ml package, copied whole. agent.py now decides the gym slot with it, so
+# the calendar Lambda carries the model code -- pure Python, no scikit-learn,
+# which is the whole reason train.py fits by hand instead of importing sklearn.
+SOURCE_PACKAGES = ["ml"]
 
 KEEP_DISCOVERY_DOC = "calendar.v3.json"
 
@@ -99,6 +105,15 @@ def build():
             raise FileNotFoundError(f"missing source module: {module}")
         shutil.copy2(source, PACKAGE / module)
     print(f"copied {len(SOURCE_MODULES)} source modules")
+
+    for name in SOURCE_PACKAGES:
+        source = ROOT / name
+        if not source.is_dir():
+            raise FileNotFoundError(f"missing source package: {name}")
+        shutil.copytree(
+            source, PACKAGE / name, ignore=shutil.ignore_patterns("__pycache__", "*.md")
+        )
+    print(f"copied {len(SOURCE_PACKAGES)} source packages")
 
     shutil.make_archive(str(ZIP_PATH.with_suffix("")), "zip", str(PACKAGE))
 

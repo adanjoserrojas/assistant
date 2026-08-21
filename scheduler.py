@@ -144,15 +144,23 @@ def _score(activity, start, already_scheduled, day, tz):
     return score
 
 
-def schedule_activities(activities, events, day, tz=None):
+def schedule_activities(activities, events, day, tz=None, already_scheduled=None):
     """Place each activity in its best free slot, in fixed order.
 
-    Returns (scheduled, unplaced). An activity with no viable slot is reported
+    Returns (placed, unplaced). An activity with no viable slot is reported
     rather than forced -- a missing gym is better than a double-booked one.
+
+    `already_scheduled` seeds the scoring context with activities placed by an
+    earlier call, without re-placing them. agent.schedule_day needs it: meals
+    and gym now go through separate calls so the model can pick the gym slot,
+    and without this the meal-gap penalty in _score() would look at an empty
+    list and never fire -- silently allowing gym to start the minute dinner
+    ends. Only `placed` is returned, so seeded items are never duplicated.
     """
     tz = tz or ZoneInfo(config.TIMEZONE)
     busy = list(events)
-    scheduled, unplaced = [], []
+    scheduled = list(already_scheduled or [])
+    placed, unplaced = [], []
 
     for activity in activities:
         free_windows = calculate_free_windows(busy, day, tz)
@@ -165,15 +173,16 @@ def schedule_activities(activities, events, day, tz=None):
         best = min(
             candidates, key=lambda s: (_score(activity, s, scheduled, day, tz), s)
         )
-        placed = ScheduledActivity(
+        item = ScheduledActivity(
             name=activity.name,
             start=best,
             end=best + timedelta(minutes=activity.duration_minutes),
         )
-        scheduled.append(placed)
+        scheduled.append(item)
+        placed.append(item)
 
         # Occupy the slot so later activities cannot overlap it.
         busy.append(
-            CalendarEvent(title=placed.name, start=placed.start, end=placed.end)
+            CalendarEvent(title=item.name, start=item.start, end=item.end)
         )
-    return scheduled, unplaced
+    return placed, unplaced

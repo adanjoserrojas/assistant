@@ -37,6 +37,16 @@ VALID_GYM_LOCATIONS = {
 
 CONFIDENCE_THRESHOLD = 0.80
 
+# Training-eligible records required before the training Lambda will publish a
+# model at all. Enforced in one place -- ml_handlers/train_model_handler.py --
+# so the morning run never needs to know the number: no artifact means it uses
+# the deterministic preferences path.
+#
+# Note this counts records, not attended sessions. Unattended days written by
+# the validator are training-eligible too, and they are the negatives the model
+# needs most.
+MIN_TRAINING_RECORDS = 70
+
 BREAKFAST = {
     "duration": 60,
     "earliest": "08:00",

@@ -13,12 +13,14 @@ from datetime import date, datetime
 
 import calendar_client
 import config
+import gym_allocator
 import scheduler
 from validator import validate_schedule
 
 log = logging.getLogger("agent")
 
 ACTIVITIES = ("breakfast", "lunch", "dinner", "gym")
+GYM = "gym"
 
 
 def analyze(events, day):
@@ -58,7 +60,46 @@ def determine_required_activities(analysis, already_created):
     return required
 
 
-def report(day, events, analysis, required, scheduled, unplaced, problems, dry_run):
+def schedule_day(required, events, day, tz):
+    """Meals deterministically, then gym on top of them.
+
+    The order is the point. Meals are placed first and become busy time, so the
+    gym search sees the whole day rather than competing with meals that have not
+    been decided yet -- which is what scheduler.SCHEDULING_ORDER has always
+    encoded, and what splitting the call preserves.
+
+    Meals stay on preferences forever; they are not a prediction problem. Only
+    gym is dynamic, and only when the model has earned it.
+    """
+    activities = [a for a in scheduler.activities_from_config() if a.name in required]
+    meals = [a for a in activities if a.name != GYM]
+    gym = [a for a in activities if a.name == GYM]
+
+    scheduled, unplaced = scheduler.schedule_activities(meals, events, day, tz)
+    if not gym:
+        return scheduled, unplaced, {"method": "not_required", "reason": "gym not required today"}
+
+    decision = gym_allocator.allocate_safely(events, scheduled, day, tz)
+    if decision["winner"] is not None:
+        scheduled.append(decision["winner"])
+        return scheduled, unplaced, decision
+
+    if decision["method"] == "rest":
+        return scheduled, unplaced, decision
+
+    # No model, a model that has not earned it, or an outright failure: place
+    # gym exactly as it has always been placed. The already-scheduled meals
+    # travel in as busy time so this path sees the same day the model did.
+    busy = list(events) + gym_allocator.meals_as_events(scheduled)
+    gym_scheduled, gym_unplaced = scheduler.schedule_activities(
+        gym, busy, day, tz, already_scheduled=scheduled
+    )
+    scheduled.extend(gym_scheduled)
+    unplaced.extend(gym_unplaced)
+    return scheduled, unplaced, decision
+
+
+def report(day, events, analysis, required, scheduled, unplaced, problems, dry_run, gym_decision=None):
     print(f"\n{calendar_client.calendar_id()} -- {day}\n")
 
     print("Existing events:")
@@ -82,6 +123,12 @@ def report(day, events, analysis, required, scheduled, unplaced, problems, dry_r
     if unplaced:
         print(f"  no viable slot for: {', '.join(unplaced)}")
 
+    if gym_decision:
+        print(f"\nGym allocation: {gym_decision['method']}")
+        print(f"  {gym_decision['reason']}")
+        for entry in gym_decision.get("scores", []):
+            print(f"  {entry['start'][11:16]}  p={entry['probability']}")
+
     print(f"\nValidation: {'PASS' if not problems else 'FAIL'}")
     for problem in problems:
         print(f"  - {problem}")
@@ -102,18 +149,25 @@ def run(dry_run=False, day=None):
     required = determine_required_activities(analysis, already_created)
 
     # Agent-created events are real events -- keep them as busy time.
-    activities = [a for a in scheduler.activities_from_config() if a.name in required]
-    scheduled, unplaced = scheduler.schedule_activities(activities, events, day, tz)
+    scheduled, unplaced, gym_decision = schedule_day(required, events, day, tz)
 
     problems = validate_schedule(events, scheduled, day, tz)
-    report(day, events, analysis, required, scheduled, unplaced, problems, dry_run)
+    report(
+        day, events, analysis, required, scheduled, unplaced, problems, dry_run,
+        gym_decision,
+    )
 
     if problems:
         log.error("validation failed; writing nothing")
         return {"written": 0, "problems": problems}
 
     if dry_run:
-        return {"written": 0, "problems": []}
+        return {
+            "written": 0,
+            "problems": [],
+            "gym_method": gym_decision["method"],
+            "gym_reason": gym_decision["reason"],
+        }
 
     written = 0
     for item in sorted(scheduled, key=lambda s: s.start):
@@ -126,7 +180,12 @@ def run(dry_run=False, day=None):
             break
 
     print(f"Wrote {written} event(s) to {calendar_client.calendar_id()}.\n")
-    return {"written": written, "problems": []}
+    return {
+        "written": written,
+        "problems": [],
+        "gym_method": gym_decision["method"],
+        "gym_reason": gym_decision["reason"],
+    }
 
 
 def lambda_handler(event, context):

@@ -93,13 +93,23 @@ class Candidate:
 
 
 def load_duration_profile() -> dict[str, float]:
-    """Read gym/duration_profiles.json, the artifact duration_profile.py writes."""
-    if not config.BUCKET_NAME:
-        raise RuntimeError("BUCKET_NAME is not set; run cdk deploy and export it")
+    """Read gym/duration_profiles.json, or {} when there is nothing published.
 
-    body = s3_client().get_object(
-        Bucket=config.BUCKET_NAME, Key=DURATION_PROFILE_KEY
-    )["Body"].read()
+    Deliberately tolerant. Before the first training run there is no artifact
+    and no bucket may even be configured, and that is the exact state the
+    deterministic preferences path runs in -- raising here would crash the
+    morning schedule on the fallback it exists to provide. An empty profile
+    leaves duration_for() to size every workout from config.GYM.
+    """
+    if not config.BUCKET_NAME:
+        return {}
+
+    try:
+        body = s3_client().get_object(
+            Bucket=config.BUCKET_NAME, Key=DURATION_PROFILE_KEY
+        )["Body"].read()
+    except Exception:
+        return {}
     return json.loads(body)
 
 
