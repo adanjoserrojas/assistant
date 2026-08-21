@@ -118,7 +118,7 @@ def resolve_workout() -> tuple[str, int]:
     return config.WORKOUTS[cycle_index], cycle_index
 
 
-def _gym_activity(duration_minutes: int) -> Activity:
+def gym_activity(duration_minutes: int) -> Activity:
     """The gym as an Activity, sized by the learned profile instead of config.
 
     config.GYM still supplies earliest/latest/preferred -- those are your rules
@@ -134,14 +134,14 @@ def _gym_activity(duration_minutes: int) -> Activity:
     )
 
 
-def _window_for(start: datetime, free_windows: list[tuple[datetime, datetime]]):
+def window_for(start: datetime, free_windows: list[tuple[datetime, datetime]]):
     for window_start, window_end in free_windows:
         if window_start <= start and start < window_end:
             return window_start, window_end
     return None
 
 
-def _spread(starts: list[datetime], limit: int, min_gap: timedelta) -> list[datetime]:
+def spread_starts(starts: list[datetime], limit: int, min_gap: timedelta) -> list[datetime]:
     """Thin a dense grid down to `limit` options that are actually different.
 
     Two passes. First a greedy sweep that drops anything within min_gap of the
@@ -188,11 +188,11 @@ def generate_candidates(
     duration = timedelta(minutes=duration_minutes)
 
     free_windows = calculate_free_windows(events, day, tz)
-    starts = candidate_starts(_gym_activity(duration_minutes), free_windows, day, tz)
+    starts = candidate_starts(gym_activity(duration_minutes), free_windows, day, tz)
 
     candidates = []
-    for start in _spread(sorted(starts), limit, timedelta(minutes=MIN_SPACING_MINUTES)):
-        window = _window_for(start, free_windows)
+    for start in spread_starts(sorted(starts), limit, timedelta(minutes=MIN_SPACING_MINUTES)):
+        window = window_for(start, free_windows)
         if window is None:
             continue
         window_start, window_end = window

@@ -11,6 +11,7 @@ from .candidate_generator import (
     load_duration_profile,
     resolve_workout,
 )
+from .backfill import TrainingExample, build_examples, examples_for_day
 
 __all__ = [
     "fetch_sessions",
@@ -23,5 +24,8 @@ __all__ = [
     "generate_candidates",
     "load_duration_profile",
     "resolve_workout",
+    "TrainingExample",
+    "build_examples",
+    "examples_for_day",
 ]
 

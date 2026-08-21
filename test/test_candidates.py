@@ -17,7 +17,7 @@ from ml.candidate_generator import (
     MIN_SPACING_MINUTES,
     REST_WORKOUT,
     Candidate,
-    _spread,
+    spread_starts,
     duration_for,
     generate_candidates,
 )
@@ -159,26 +159,26 @@ def test_to_dict_carries_the_model_features():
     }
 
 
-# --- _spread -------------------------------------------------------------
+# --- spread_starts -------------------------------------------------------------
 
 
 def test_spread_of_empty_is_empty():
-    assert _spread([], 3, timedelta(minutes=60)) == []
+    assert spread_starts([], 3, timedelta(minutes=60)) == []
 
 
 def test_spread_keeps_everything_when_under_limit():
     slots = [at("08:00"), at("12:00")]
-    assert _spread(slots, 3, timedelta(minutes=60)) == slots
+    assert spread_starts(slots, 3, timedelta(minutes=60)) == slots
 
 
 def test_spread_drops_clustered_slots():
     # 15-minute grid across one hour collapses to a single option.
     slots = [at("17:00"), at("17:15"), at("17:30"), at("17:45")]
-    assert _spread(slots, 3, timedelta(minutes=60)) == [at("17:00")]
+    assert spread_starts(slots, 3, timedelta(minutes=60)) == [at("17:00")]
 
 
 def test_spread_reaches_both_ends():
     slots = [at(f"{hour:02d}:00") for hour in range(7, 22)]
-    picked = _spread(slots, 3, timedelta(minutes=60))
+    picked = spread_starts(slots, 3, timedelta(minutes=60))
     assert picked[0] == slots[0]
     assert picked[-1] == slots[-1]
