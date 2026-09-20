@@ -5,12 +5,8 @@ live candidate must produce the same vector under the same spec.
 """
 
 import json
-import os
-import sys
 from datetime import date, datetime, time
 from zoneinfo import ZoneInfo
-
-sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 import pytest
 

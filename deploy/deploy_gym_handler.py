@@ -29,7 +29,7 @@ from pathlib import Path
 # Repo path -> name at the zip root.
 SOURCE_MODULES = {
     "handlers/gym_command_handler.py": "gym_command_handler.py",
-    "config.py": "config.py",
+    "calendar-agent/config.py": "config.py",
 }
 
 ROOT = Path(__file__).parent.parent

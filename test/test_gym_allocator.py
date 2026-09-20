@@ -4,12 +4,8 @@ gym_allocator imports no calendar or LLM client, so the whole meals-then-gym
 decision is exercised here without credentials.
 """
 
-import os
-import sys
 from datetime import date, datetime, time
 from zoneinfo import ZoneInfo
-
-sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 import config
 import gym_allocator

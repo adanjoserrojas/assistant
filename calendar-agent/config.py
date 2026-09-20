@@ -19,6 +19,39 @@ USER_ID = "ADAN"
 #   Lambda   Configuration -> Environment variables
 CALENDAR_ID = os.environ.get("CALENDAR_ID", "")
 
+
+# Calendars to READ, comma-separated. Events get created from more than one
+# Google account, and a calendar the agent cannot see is a calendar it will
+# schedule straight over. Unset falls back to reading just the write target,
+# which is exactly how this agent behaved before multi-calendar support.
+#
+# Writing stays singular: CALENDAR_ID above is the only calendar the agent ever
+# creates events on, so every aiScheduler marker -- and therefore the whole
+# idempotency story -- lives in one place.
+#
+# Each calendar must be shared with the service account separately. Reading
+# needs "See all event details"; only CALENDAR_ID needs "Make changes to events".
+#
+#   local    setx CALENDAR_IDS "work@example.com,personal@gmail.com"
+#   Lambda   Configuration -> Environment variables
+def _read_calendar_ids():
+    """Stripped, blank-free, de-duplicated, write target first.
+
+    Order is load-bearing downstream: duplicate events across calendars are
+    resolved by keeping the first one seen, so leading with the write target
+    means the agent's own copy of an event wins.
+    """
+    found = [entry.strip() for entry in os.environ.get("CALENDAR_IDS", "").split(",") if entry.strip()]
+
+    ordered = []
+    for entry in ([CALENDAR_ID, *found] if CALENDAR_ID else found):
+        if entry not in ordered:
+            ordered.append(entry)
+    return ordered
+
+
+CALENDAR_IDS = _read_calendar_ids()
+
 # Local dev credentials. In Lambda, set GOOGLE_SERVICE_ACCOUNT_JSON instead.
 SERVICE_ACCOUNT_FILE = "service-account.json"
 
@@ -51,21 +84,21 @@ BREAKFAST = {
     "duration": 60,
     "earliest": "08:00",
     "preferred": "08:30",
-    "latest": "09:00",
+    "latest": "12:00",
 }
 
 LUNCH = {
     "duration": 45,
     "earliest": "11:00",
     "preferred": "12:30",
-    "latest": "15:00",
+    "latest": "16:00",
 }
 
 DINNER = {
     "duration": 45,
     "earliest": "17:00",
     "preferred": "19:00",
-    "latest": "21:30",
+    "latest": "22:30",
 }
 
 GYM = {

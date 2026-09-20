@@ -4,12 +4,8 @@ Everything here is pure -- no AWS, no credentials. generate_candidates takes the
 day's events as an argument precisely so this file can stay that way.
 """
 
-import os
-import sys
 from datetime import date, datetime, time, timedelta
 from zoneinfo import ZoneInfo
-
-sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 import config
 from models import CalendarEvent

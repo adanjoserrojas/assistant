@@ -7,13 +7,9 @@ implementation in the first place.
 
 import json
 import math
-import os
 import random
-import sys
 from datetime import date, datetime, time
 from zoneinfo import ZoneInfo
-
-sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 import pytest
 

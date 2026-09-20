@@ -27,6 +27,21 @@ Gym is a second loop. An iPhone Shortcut logs each session to DynamoDB; those lo
 
 No OAuth consent screen, no browser flow. Do not use `primary` as the calendar ID — it resolves to the service account's own empty calendar.
 
+### Reading more than one calendar
+
+Events created from a second Google account live on a different calendar, and a calendar the agent cannot see is one it will schedule straight over. Share each one with the service account separately, then list them all in `CALENDAR_IDS`:
+
+```bash
+export CALENDAR_ID=work@example.com                            # written to
+export CALENDAR_IDS=work@example.com,personal@gmail.com        # read from
+```
+
+Reading needs only **See all event details**; just `CALENDAR_ID` needs **Make changes to events**. Unset `CALENDAR_IDS` reads only the write target, which is the original single-calendar behaviour.
+
+Writes stay singular on purpose — every `aiScheduler` marker lives on one calendar, so idempotency has a single source of truth. Duplicate events across calendars (an invite from one account to the other) are collapsed on `iCalUID`, keeping the write target's copy.
+
+A calendar that fails to read **does not abort the run** — the day is scheduled from whatever responded, and the failure is logged, banner-printed, and returned as `degraded: true`. The trade-off is real: events on an unread calendar are invisible to `validator.validate_schedule` too, so a degraded morning can double-book against them.
+
 ## 2. Local setup
 
 ```bash
@@ -40,15 +55,15 @@ setx CALENDAR_ID you@example.com   # Windows, reopen terminal after
 export CALENDAR_ID=you@example.com # macOS/Linux
 ```
 
-`config.py` reads `TABLE_NAME` at import with no default, so it must be set before anything imports it — including the tests.
+`calendar-agent/config.py` reads `TABLE_NAME` at import with no default, so it must be set before anything imports it — including the tests.
 
 Verify the calendar connection:
 
 ```bash
-python calendar_client.py         # prints today's events
-python agent.py --dry-run         # prints the plan, writes nothing
-python agent.py                   # writes to the calendar
-python -m pytest test -q          # 148 tests, no network
+python calendar-agent/calendar_client.py   # prints today's events
+python calendar-agent/agent.py --dry-run   # prints the plan, writes nothing
+python calendar-agent/agent.py             # writes to the calendar
+python -m pytest test -q                   # 178 tests, no network
 ```
 
 ## 3. Bedrock
@@ -105,6 +120,7 @@ Environment variables:
 
 ```
 CALENDAR_ID         = you@example.com
+CALENDAR_IDS        = you@example.com,personal@gmail.com   # optional
 GOOGLE_SA_SECRET_ID = calendar-agent/google-sa
 ```
 
@@ -325,7 +341,8 @@ Environment variables:
 
 | Variable | Default | |
 |---|---|---|
-| `CALENDAR_ID` | — | required |
+| `CALENDAR_ID` | — | required; the **only** calendar written to |
+| `CALENDAR_IDS` | `CALENDAR_ID` | comma-separated calendars to **read** |
 | `TABLE_NAME` | — | required, read at import |
 | `GOOGLE_SA_SECRET_ID` | — | Lambda; falls back to `service-account.json` |
 | `GYM_COMMAND_SECRET` | — | gym command Lambda; unset rejects every request |
@@ -338,13 +355,18 @@ Gym means weightlifting. Cardio and sports don't satisfy it — edit `SYSTEM_PRO
 ## Layout
 
 ```
-agent.py                        orchestration, CLI, lambda_handler
-calendar_client.py              Google Calendar read/write
-llm_client.py                   Bedrock classification, forced tool-call schema
-scheduler.py                    interval merging, free windows, candidate starts
-validator.py                    last gate before any write
-models.py                       dataclasses
-config.py                       preferences
+calendar-agent/                 loop 1, flat on sys.path -- see the note below
+  agent.py                      orchestration, CLI, lambda_handler
+  calendar_client.py            Google Calendar read/write
+  llm_client.py                 Bedrock classification, forced tool-call schema
+  scheduler.py                  interval merging, free windows, candidate starts
+  validator.py                  last gate before any write
+  gym_allocator.py              model-or-fallback gym placement
+  models.py                     dataclasses
+  config.py                     preferences
+
+conftest.py                     puts both source roots on sys.path for the tests
+pytest.ini                      anchors pytest's rootdir at the repo root
 
 handlers/
   gym_command_handler.py        START/STOP/SKIP/STATUS, DynamoDB writes
@@ -375,8 +397,10 @@ infra/
   stack/gym_ml_stack.py         GymMlStack -- artifacts bucket only so far
   requirements.txt
 
-test/                           148 tests, no network
+test/                           178 tests, no network
 ```
+
+`calendar-agent/` is a source directory, not a Python package — the hyphen makes that impossible, and there is no `__init__.py`. The modules inside are imported flat (`import config`, `from scheduler import parse_hhmm`), exactly as they are in the Lambda zip, where `deploy/deploy.py` copies each one to the zip root so the handler stays `agent.lambda_handler`. Locally the root `conftest.py` puts both `calendar-agent/` and the repo root on `sys.path`; `ml/` imports `scheduler`, `models` and `config` across that boundary, so both are needed. Running `python calendar-agent/agent.py` directly works too — its `__main__` block adds the repo root so the `ml/` lookup inside `gym_allocator` resolves.
 
 Everything under `ml/` imports without credentials: no module builds a boto3 client or reads DynamoDB at import time, and the pure functions (`generate_candidates`, `examples_for_day`, `vectorize`) take their data as arguments. That is what keeps the test suite offline.
 

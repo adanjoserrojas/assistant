@@ -1,13 +1,14 @@
 """Orchestration entry point (plan.md section 5).
 
-    python agent.py --dry-run     inspect the plan, write nothing
-    python agent.py               write the plan to Google Calendar
+    python calendar-agent/agent.py --dry-run     inspect the plan, write nothing
+    python calendar-agent/agent.py               write the plan to Google Calendar
 
 Fixed pipeline: READ -> ANALYZE -> SCHEDULE -> VALIDATE -> WRITE.
 """
 
 import argparse
 import logging
+import os
 import sys
 from datetime import date, datetime
 
@@ -99,10 +100,28 @@ def schedule_day(required, events, day, tz):
     return scheduled, unplaced, decision
 
 
-def report(day, events, analysis, required, scheduled, unplaced, problems, dry_run, gym_decision=None):
+def report(day, events, analysis, required, scheduled, unplaced, problems, dry_run,
+           gym_decision=None, calendar_failures=()):
     print(f"\n{calendar_client.calendar_id()} -- {day}\n")
 
-    print("Existing events:")
+    print("Calendars read:")
+    broken = {failure["calendar_id"] for failure in calendar_failures}
+    for source in calendar_client.read_calendar_ids():
+        if source in broken:
+            continue
+        count = sum(1 for item in events if item.calendar_id == source)
+        marker = "  <- writes go here" if source == config.CALENDAR_ID else ""
+        print(f"  {source}  ({count} event(s)){marker}")
+    for failure in calendar_failures:
+        print(f"  {failure['calendar_id']}  !! UNREADABLE -- {failure['error']}")
+    if calendar_failures:
+        print(
+            "\n  !! DEGRADED -- the calendars above could not be read. Their events\n"
+            "     are invisible both to scheduling and to overlap validation, so\n"
+            "     this plan may double-book against them."
+        )
+
+    print("\nExisting events:")
     if not events:
         print("  (none)")
     for item in events:
@@ -142,7 +161,17 @@ def run(dry_run=False, day=None):
     day = day or datetime.now(tz).date()
 
     # Reading is mandatory; never schedule blind (plan.md section 40).
-    events = calendar_client.get_today_events(day)
+    events, calendar_failures = calendar_client.get_today_events_detailed(day)
+    for failure in calendar_failures:
+        # Loud on purpose. This is the one failure mode that silently produces a
+        # double-booking: an unread calendar is invisible to the scheduler AND
+        # to the validator, so nothing further down can catch the overlap.
+        log.error(
+            "could not read calendar %s (%s); its events are invisible to "
+            "scheduling and to overlap validation",
+            failure["calendar_id"],
+            failure["error"],
+        )
     already_created = calendar_client.find_agent_events(day)
 
     analysis = analyze(events, day)
@@ -154,12 +183,23 @@ def run(dry_run=False, day=None):
     problems = validate_schedule(events, scheduled, day, tz)
     report(
         day, events, analysis, required, scheduled, unplaced, problems, dry_run,
-        gym_decision,
+        gym_decision, calendar_failures,
     )
+
+    # Every return path carries these, so a degraded morning is visible in the
+    # Lambda response and not only in a printed report nobody reads.
+    sources = {
+        "calendars_read": [
+            source for source in calendar_client.read_calendar_ids()
+            if source not in {f["calendar_id"] for f in calendar_failures}
+        ],
+        "calendars_failed": list(calendar_failures),
+        "degraded": bool(calendar_failures),
+    }
 
     if problems:
         log.error("validation failed; writing nothing")
-        return {"written": 0, "problems": problems}
+        return {"written": 0, "problems": problems, **sources}
 
     if dry_run:
         return {
@@ -167,6 +207,7 @@ def run(dry_run=False, day=None):
             "problems": [],
             "gym_method": gym_decision["method"],
             "gym_reason": gym_decision["reason"],
+            **sources,
         }
 
     written = 0
@@ -185,6 +226,7 @@ def run(dry_run=False, day=None):
         "problems": [],
         "gym_method": gym_decision["method"],
         "gym_reason": gym_decision["reason"],
+        **sources,
     }
 
 
@@ -204,6 +246,12 @@ def lambda_handler(event, context):
 
 
 if __name__ == "__main__":
+    # ml/ lives at the repo root; this file does not. Running the script puts
+    # only calendar-agent/ on the path, and gym_allocator.allocate_safely
+    # swallows the ImportError -- the run would quietly report the fallback and
+    # look fine. Lambda never reaches this block: there the zip root is flat.
+    sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+
     parser = argparse.ArgumentParser(description="Daily calendar agent")
     parser.add_argument("--dry-run", action="store_true", help="plan only, write nothing")
     parser.add_argument("--date", help="YYYY-MM-DD, defaults to today")

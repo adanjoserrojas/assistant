@@ -8,6 +8,9 @@ class CalendarEvent:
     start: datetime
     end: datetime
     all_day: bool = False
+    # Which calendar this came from. Defaulted because events synthesized from
+    # placed activities (scheduler, gym_allocator) never came from one.
+    calendar_id: str = ""
 
 @dataclass
 class Activity:

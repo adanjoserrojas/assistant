@@ -7,7 +7,7 @@ Credentials are resolved in this order:
   2. config.SERVICE_ACCOUNT_FILE -- path on disk (local dev)
 
 Run directly to smoke-test the connection:
-    python calendar_client.py
+    python calendar-agent/calendar_client.py
 """
 
 import json
@@ -62,6 +62,7 @@ def _credentials():
 
 
 def calendar_id():
+    """The single calendar the agent WRITES to."""
     if not config.CALENDAR_ID:
         raise RuntimeError(
             "CALENDAR_ID is not set. Set it to the calendar address you shared "
@@ -69,6 +70,24 @@ def calendar_id():
             "(then reopen the terminal), or as a Lambda environment variable."
         )
     return config.CALENDAR_ID
+
+
+def read_calendar_ids():
+    """Every calendar the agent READS, write target first.
+
+    Deliberately plural where calendar_id() is singular: the agent has to see
+    the whole day across every account to avoid double-booking, but it only
+    ever writes to one place.
+    """
+    if not config.CALENDAR_IDS:
+        raise RuntimeError(
+            "No calendars to read. Set CALENDAR_ID to the calendar you shared "
+            "with the service account, and optionally CALENDAR_IDS to a "
+            'comma-separated list to read several -- locally `setx CALENDAR_IDS '
+            '"work@example.com,personal@gmail.com"` (then reopen the terminal), '
+            "or as a Lambda environment variable."
+        )
+    return list(config.CALENDAR_IDS)
 
 
 def authenticate():
@@ -104,6 +123,7 @@ def _parse_event(item, tz):
             start=datetime.fromisoformat(start["dateTime"]).astimezone(tz),
             end=datetime.fromisoformat(end["dateTime"]).astimezone(tz),
             all_day=False,
+            calendar_id=item.get("_calendar_id", ""),
         )
 
     # An all-day event's end date is exclusive.
@@ -112,20 +132,18 @@ def _parse_event(item, tz):
         start=datetime.combine(date.fromisoformat(start["date"]), time.min, tzinfo=tz),
         end=datetime.combine(date.fromisoformat(end["date"]), time.min, tzinfo=tz),
         all_day=True,
+        calendar_id=item.get("_calendar_id", ""),
     )
 
 
-def _raw_events(day=None, **params):
-    """Page through events.list, returning raw API dicts."""
-    start, end = day_bounds(day)
-    service = authenticate()
-
+def _list_one(service, cal_id, start, end, params):
+    """Page through one calendar's events.list."""
     items, page_token = [], None
     while True:
         response = (
             service.events()
             .list(
-                calendarId=calendar_id(),
+                calendarId=cal_id,
                 timeMin=start.isoformat(),  # RFC3339 with offset, required
                 timeMax=end.isoformat(),
                 singleEvents=True,  # expand recurring series into instances
@@ -142,25 +160,119 @@ def _raw_events(day=None, **params):
             return items
 
 
-def get_today_events(day=None):
-    """Today's events as CalendarEvent objects, earliest first."""
+def _describe(error):
+    """Short, readable failure text.
+
+    googleapiclient's HttpError stringifies to the entire request URL, query
+    string included, which buries the one thing that matters (404 vs 403 vs a
+    timeout) in 300 characters of noise -- in the report and in every log line.
+    """
+    status = getattr(getattr(error, "resp", None), "status", None)
+    if status:
+        return f"HTTP {status}: {getattr(error, 'reason', None) or type(error).__name__}"
+
+    return f"{type(error).__name__}: {' '.join(str(error).split())[:160]}"
+
+
+def _raw_events(day=None, **params):
+    """Raw API dicts from every read calendar, plus whatever failed.
+
+    Returns (items, failures). A calendar that raises is recorded rather than
+    propagated -- losing one calendar degrades the day, it does not cancel it.
+
+    The caller owns making that degradation visible (see agent.report), and it
+    matters more than it looks: the events we could not read are exactly the
+    ones validator.validate_schedule can no longer check overlaps against, so a
+    quiet failure here becomes a double-booking downstream.
+    """
+    start, end = day_bounds(day)
+    service = authenticate()
+
+    items, failures = [], []
+    for cal_id in read_calendar_ids():
+        try:
+            found = _list_one(service, cal_id, start, end, params)
+        except Exception as error:
+            failures.append({"calendar_id": cal_id, "error": _describe(error)})
+            continue
+
+        # Tag provenance before the dicts lose their calendar context.
+        for item in found:
+            item["_calendar_id"] = cal_id
+        items.extend(found)
+
+    return items, failures
+
+
+def _deduplicate(items):
+    """One entry per real-world event, across calendars.
+
+    An invite sent from one of your accounts to another lands on both calendars
+    as separate resources sharing an iCalUID. merge_busy_intervals would collapse
+    the duplicate intervals anyway, so this is about what a human and the LLM
+    see -- the same meeting listed twice is noise in the prompt and the report.
+
+    First occurrence wins, and read_calendar_ids() puts the write target first.
+    """
+    seen, unique = set(), []
+    for item in items:
+        key = item.get("iCalUID") or item.get("id")
+        if key in seen:
+            continue
+        seen.add(key)
+        unique.append(item)
+    return unique
+
+
+def get_today_events_detailed(day=None):
+    """Today's events across every read calendar, plus per-calendar failures.
+
+    Returns (events, failures), earliest first. The sort is not redundant:
+    orderBy=startTime only orders within a single request, so merged calendars
+    arrive interleaved and nothing else re-establishes the ordering that
+    get_today_events promises.
+    """
     tz = timezone()
-    return [
+    items, failures = _raw_events(day)
+
+    events = [
         _parse_event(item, tz)
-        for item in _raw_events(day)
+        for item in _deduplicate(items)
         if item.get("status") != "cancelled"
     ]
+    events.sort(key=lambda event: (event.start, event.title))
+    return events, failures
+
+
+def get_today_events(day=None):
+    """Today's events as CalendarEvent objects, earliest first.
+
+    Deliberately still returns a bare list. ml/backfill.py takes this very
+    function as its `events_for_day` callable, so the return type is part of the
+    training pipeline's contract -- widening it here would quietly change how
+    every historical day is reconstructed. Callers that need to know a calendar
+    failed use get_today_events_detailed instead.
+    """
+    return get_today_events_detailed(day)[0]
 
 
 def find_agent_events(day=None):
-    """Titles of events this agent already created today (plan.md section 24)."""
-    seen = {item["id"]: item for item in _raw_events(
+    """Titles of events this agent already created today (plan.md section 24).
+
+    Scans every read calendar, not just the write target. Read failures are
+    ignored here on purpose: this answers "have I already done this?", and a
+    calendar that will not load cannot hold an event this agent wrote, because
+    the agent only ever writes to CALENDAR_ID.
+    """
+    marked, _ = _raw_events(
         day, privateExtendedProperty=f"{config.AGENT_MARKER_KEY}=1"
-    )}
+    )
+    seen = {item["id"]: item for item in marked}
 
     # Fall back to the title prefix so events created before the marker existed
     # still count toward idempotency.
-    for item in _raw_events(day):
+    everything, _ = _raw_events(day)
+    for item in everything:
         if item.get("summary", "").startswith(config.AGENT_PREFIX):
             seen.setdefault(item["id"], item)
 
@@ -185,8 +297,21 @@ def create_event(title, start, end):
 
 
 if __name__ == "__main__":
-    todays_events = get_today_events()
-    print(f"{calendar_id()} -- {datetime.now(timezone()).date()}\n")
+    todays_events, read_failures = get_today_events_detailed()
+
+    print(f"{datetime.now(timezone()).date()}\n")
+    print("Calendars read:")
+    broken = {failure["calendar_id"] for failure in read_failures}
+    for source in read_calendar_ids():
+        if source in broken:
+            continue
+        count = sum(1 for event in todays_events if event.calendar_id == source)
+        marker = "  <- writes go here" if source == config.CALENDAR_ID else ""
+        print(f"  {source}  ({count} event(s)){marker}")
+    for failure in read_failures:
+        print(f"  {failure['calendar_id']}  !! UNREADABLE -- {failure['error']}")
+
+    print()
     if not todays_events:
         print("  (no events today)")
     for event in todays_events:

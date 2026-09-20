@@ -30,7 +30,7 @@ from pathlib import Path
 # Repo path -> name at the zip root.
 SOURCE_MODULES = {
     "handlers/validate_sesh_handler.py": "validate_sesh_handler.py",
-    "config.py": "config.py",
+    "calendar-agent/config.py": "config.py",
 }
 
 ROOT = Path(__file__).parent.parent

@@ -9,7 +9,7 @@ The tool schema is deliberately flat (breakfast_satisfied, breakfast_confidence,
 shape agent.py expects is reassembled here.
 
 Run directly to test the call in isolation:
-    python llm_client.py
+    python calendar-agent/llm_client.py
 """
 
 import json

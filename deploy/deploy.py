@@ -34,16 +34,19 @@ PLATFORM = "manylinux2014_x86_64"
 # boto3 ships with the Lambda runtime, so it is deliberately absent here.
 DEPENDENCIES = ["google-api-python-client", "google-auth", "tzdata"]
 
-SOURCE_MODULES = [
-    "agent.py",
-    "calendar_client.py",
-    "llm_client.py",
-    "scheduler.py",
-    "validator.py",
-    "models.py",
-    "config.py",
-    "gym_allocator.py",
-]
+# Repo path -> name at the zip root. The modules live in calendar-agent/ but
+# land flat, because the Lambda's handler is agent.lambda_handler and every
+# import in them is absolute -- a subdirectory in the zip would break both.
+SOURCE_MODULES = {
+    "calendar-agent/agent.py": "agent.py",
+    "calendar-agent/calendar_client.py": "calendar_client.py",
+    "calendar-agent/llm_client.py": "llm_client.py",
+    "calendar-agent/scheduler.py": "scheduler.py",
+    "calendar-agent/validator.py": "validator.py",
+    "calendar-agent/models.py": "models.py",
+    "calendar-agent/config.py": "config.py",
+    "calendar-agent/gym_allocator.py": "gym_allocator.py",
+}
 
 # The ml package, copied whole. agent.py now decides the gym slot with it, so
 # the calendar Lambda carries the model code -- pure Python, no scikit-learn,
@@ -99,11 +102,11 @@ def build():
     install_dependencies()
     trim()
 
-    for module in SOURCE_MODULES:
-        source = ROOT / module
+    for source_path, zip_name in SOURCE_MODULES.items():
+        source = ROOT / source_path
         if not source.exists():
-            raise FileNotFoundError(f"missing source module: {module}")
-        shutil.copy2(source, PACKAGE / module)
+            raise FileNotFoundError(f"missing source module: {source_path}")
+        shutil.copy2(source, PACKAGE / zip_name)
     print(f"copied {len(SOURCE_MODULES)} source modules")
 
     for name in SOURCE_PACKAGES:

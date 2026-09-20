@@ -3,12 +3,8 @@
 events_for_day is injected, so nothing here touches Google Calendar or AWS.
 """
 
-import os
-import sys
 from datetime import date, datetime, time
 from zoneinfo import ZoneInfo
-
-sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 import config
 from models import CalendarEvent
