@@ -70,3 +70,4 @@ cdk.out/
 # topology that should not be public.
 cdk.context.json
 policies/
+aws-important-commands.txt
